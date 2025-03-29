@@ -9,399 +9,111 @@ The Eidosian Forge leverages these agents as specialized cognitive units,
 each with distinct capabilities and personalities.
 """
 
-import importlib
-import importlib.util
 import logging
-import re
-from enum import Enum
-from typing import (
-    Any,
-    Callable,
-    Dict,
-    List,
-    Optional,
-    Protocol,
-    Type,
-    TypeVar,
-    Union,
-    cast,
-    runtime_checkable,
-)
 
-from agent_forge.models import Memory, SmolAgent, Thought, ThoughtType
+# Forward reference for type hinting
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union, cast
+
+if TYPE_CHECKING:
+    from agent_forge.agent import EidosianAgent
+
+# Import only what we need, directly into local namespace
+import smolagents
+from smolagents.agent_types import AgentType
+from smolagents.agents import CodeAgent, MultiStepAgent, ToolCallingAgent
+from smolagents.memory import AgentMemory
+from smolagents.monitoring import AgentLogger, LogLevel
+from smolagents.tools import Tool, tool
+
+from agent_forge.agent.prompt_templates import (
+    EIDOSIAN_DEFAULT_SYSTEM_TEMPLATE as SYSTEM_PROMPT,
+)
+from agent_forge.models import Memory, Thought, ThoughtType
 
 # Setup logger
 logger = logging.getLogger(__name__)
 
-# Type variables for agent return values
-T = TypeVar("T", bound=str)
-TOutput = TypeVar("TOutput")
 
-# Check if smolagents is available using importlib.util.find_spec
-SMOLAGENTS_AVAILABLE: bool = importlib.util.find_spec("smolagents") is not None
+class SmolAgent:
+    """
+    Internal representation of a specialized agent with capabilities.
+
+    This class defines a specialized cognitive agent within the Eidosian Forge
+    ecosystem, with specific roles, capabilities, and descriptive metadata.
+    It serves as both a standalone agent representation and as a foundation
+    for more specialized agent types.
+
+    Attributes:
+        name (str): Unique identifier for the agent
+        role (str): The agent's role/title in the cognitive network
+        capabilities (List[str]): Specific capabilities this agent possesses
+        description (str): Detailed description of the agent's purpose and functions
+    """
+
+    def __init__(
+        self, name: str, role: str, capabilities: List[str], description: str
+    ) -> None:
+        """
+        Initialize a SmolAgent with its core attributes.
+
+        Args:
+            name (str): Unique identifier for the agent
+            role (str): The agent's role/title
+            capabilities (List[str]): List of agent capabilities
+            description (str): Detailed description of the agent
+        """
+        self.name: str = name
+        self.role: str = role
+        self.capabilities: List[str] = capabilities
+        self.description: str = description
+        self.Agent = CodeAgent if name == "coder" else MultiStepAgent
+
+    def __repr__(self) -> str:
+        """
+        Return a string representation of the SmolAgent.
+
+        Returns:
+            str: A representation showing the agent's name and role
+        """
+        return f"SmolAgent(name='{self.name}', role='{self.role}')"
+
+    def get_capability_summary(self) -> str:
+        """
+        Generate a summary of this agent's capabilities.
+
+        Returns:
+            str: Formatted summary of this agent's capabilities
+        """
+        return f"Agent '{self.name}' capabilities: {', '.join(self.capabilities)}"
 
 
-# Forward declare our class types
 class TaskContext:
-    pass
-
-
-class Agent:
-    pass
-
-
-class CodeAgent:
-    pass
-
-
-class MultiStepAgent:
-    pass
-
-
-class ToolCallingAgent:
-    pass
-
-
-class AgentAudio:
-    pass
-
-
-class AgentImage:
-    pass
-
-
-class AgentText:
-    pass
-
-
-class AgentMemory:
-    pass
-
-
-class MemoryStep:
-    pass
-
-
-class MessageRole(Enum):
-    pass
-
-
-class AgentLogger:
-    pass
-
-
-class LogLevel(Enum):
-    pass
-
-
-class AgentError(Exception):
-    pass
-
-
-class Tool:
-    pass
-
-
-# Initialize placeholder values
-handle_agent_output_types: Callable[[Any], Any] = lambda x: x
-parse_code_blobs: Callable[[str], List[str]] = lambda x: []
-truncate_content: Callable[[str, int], str] = lambda x, y: x[:y]
-
-
-# Define a tool decorator function type
-def tool(func_or_name: Optional[Union[Callable, str]] = None, **kwargs: Any) -> Any: ...
-
-
-if SMOLAGENTS_AVAILABLE:
-    try:
-        # Import only what we need, directly into local namespace
-        import smolagents
-        from smolagents import CodeAgent as SmolaAgent
-        from smolagents import MultiStepAgent as SmolaMultiStepAgent
-        from smolagents.agent_types import AgentText as SmolaAgentText
-        from smolagents.memory import AgentMemory as SmolaAgentMemory
-        from smolagents.memory import MemoryStep as SmolaMemoryStep
-        from smolagents.models import MessageRole as SmolaMessageRole
-        from smolagents.monitoring import AgentLogger as SmolaAgentLogger
-        from smolagents.monitoring import LogLevel as SmolaLogLevel
-        from smolagents.tools import Tool as SmolaTool
-        from smolagents.tools import tool as smola_tool
-        from smolagents.utils import AgentError as SmolaAgentError
-        from smolagents.utils import parse_code_blobs as smola_parse_code_blobs
-        from smolagents.utils import truncate_content as smola_truncate_content
-
-        # Reassign to our variables using a safer approach
-        TaskContext = cast(
-            Type[TaskContext], getattr(smolagents, "TaskContext", TaskContext)
-        )
-        Agent = SmolaAgent
-        MultiStepAgent = SmolaMultiStepAgent
-        AgentText = SmolaAgentText
-        AgentMemory = SmolaAgentMemory
-        MemoryStep = SmolaMemoryStep
-        MessageRole = SmolaMessageRole
-        AgentLogger = SmolaAgentLogger
-        LogLevel = SmolaLogLevel
-        AgentError = SmolaAgentError
-        Tool = SmolaTool
-        tool = smola_tool
-        parse_code_blobs = smola_parse_code_blobs
-        truncate_content = smola_truncate_content
-
-        # For API completeness if not in smolagents
-        if not hasattr(smolagents, "CodeAgent"):
-            CodeAgent = MultiStepAgent
-        else:
-            CodeAgent = cast(Type[CodeAgent], getattr(smolagents, "CodeAgent"))
-
-        # Check if AgentImage is available
-        if not hasattr(smolagents, "AgentImage"):
-
-            class AgentImage:
-                """Minimal AgentImage implementation."""
-
-                def __init__(self, image_data: Any):
-                    self.image_data = image_data
-
-                def to_raw(self) -> Any:
-                    return self.image_data
-
-        else:
-            AgentImage = cast(Type[AgentImage], getattr(smolagents, "AgentImage"))
-
-        # Define handle_agent_output_types if not in smolagents
-        if not hasattr(smolagents.utils, "handle_agent_output_types"):
-
-            def handle_agent_output_types(output: Any) -> Any:
-                """Convert output to appropriate agent types."""
-                if isinstance(output, str):
-                    return AgentText(output)
-                return output
-
-        else:
-            handle_agent_output_types = smolagents.utils.handle_agent_output_types
-
-    except Exception as e:
-        logger.warning(f"Error importing smolagents modules: {e}")
-        SMOLAGENTS_AVAILABLE = False
-
-# Define protocol classes and minimal implementations when smolagents is not available
-if not SMOLAGENTS_AVAILABLE:
-    # Define protocols for smolagents compatibility
-    @runtime_checkable
-    class Tool(Protocol):
-        """Protocol for smolagents Tool compatibility."""
-
-        name: str
-        description: str
-
-        def __call__(self, *args: Any, **kwargs: Any) -> Any: ...
-
-    @runtime_checkable
-    class Agent(Protocol):
-        """Protocol for smolagents Agent compatibility."""
-
-        name: str
-
-        def execute(self, task_context: Any) -> str: ...
-
-    class TaskContext:
-        """Minimal TaskContext implementation."""
-
-        def __init__(
-            self, task: str, context: str = "", state: Optional[Dict[str, Any]] = None
-        ):
-            self.task = task
-            self.context = context
-            self.state = state or {}
-
-    class AgentSystem:
-        """Protocol for smolagents AgentSystem compatibility."""
-
-        def __init__(
-            self,
-            agents: Optional[List[Agent]] = None,
-            memory_provider: Optional[Callable] = None,
-            logger: Optional[Any] = None,
-        ):
-            self.agents = agents or []
-            self.memory_provider = memory_provider
-            self.logger = logger
-
-        def execute_with_agents(
-            self, task_context: TaskContext, agents: List[Agent]
-        ) -> str:
-            """Execute with multiple agents sequentially."""
-            result = ""
-            for agent in agents:
-                result += f"\n\n## Agent: {agent.name}\n"
-                result += agent.execute(task_context)
-            return result
-
-    class AgentText:
-        """Minimal AgentText implementation."""
-
-        def __init__(self, text: str):
-            self.text = text
-
-        def to_string(self) -> str:
-            return self.text
-
-        def to_raw(self) -> str:
-            return self.text
-
-    class AgentImage:
-        """Minimal AgentImage implementation."""
-
-        def __init__(self, image_data: Any):
-            self.image_data = image_data
-
-        def to_raw(self) -> Any:
-            return self.image_data
-
-    class AgentAudio:
-        """Minimal AgentAudio implementation."""
-
-        def __init__(self, audio_data: Any):
-            self.audio_data = audio_data
-
-        def to_raw(self) -> Any:
-            return self.audio_data
-
-    class MessageRole(Enum):
-        """Minimal MessageRole implementation."""
-
-        SYSTEM = "system"
-        USER = "user"
-        ASSISTANT = "assistant"
-        TOOL = "tool"
-
-    class LogLevel(Enum):
-        """Minimal LogLevel implementation."""
-
-        OFF = -1
-        ERROR = 0
-        INFO = 1
-        DEBUG = 2
-
-    class AgentLogger:
-        """Minimal AgentLogger implementation."""
-
-        def __init__(self, name: str = "agent", level: LogLevel = LogLevel.INFO):
-            self.name = name
-            self.level = level
-
-        def info(self, message: str) -> None:
-            if self.level.value >= LogLevel.INFO.value:
-                print(f"[INFO] {self.name}: {message}")
-
-        def error(self, message: str) -> None:
-            if self.level.value >= LogLevel.ERROR.value:
-                print(f"[ERROR] {self.name}: {message}")
-
-        def debug(self, message: str) -> None:
-            if self.level.value >= LogLevel.DEBUG.value:
-                print(f"[DEBUG] {self.name}: {message}")
-
-    class MemoryStep:
-        """Minimal MemoryStep implementation."""
-
-        def __init__(self, content: str, step_type: str = "thought"):
-            self.content = content
-            self.step_type = step_type
-
-    class AgentMemory:
-        """Minimal AgentMemory implementation."""
-
-        def __init__(self):
-            self.steps: List[MemoryStep] = []
-
-        def add_step(self, step: MemoryStep) -> None:
-            self.steps.append(step)
-
-        def get_full_steps(self) -> List[MemoryStep]:
-            return self.steps
-
-        def get_succinct_steps(self) -> List[MemoryStep]:
-            return self.steps
-
-    class MultiStepAgent:
-        """Minimal MultiStepAgent implementation."""
-
-        def __init__(
-            self,
-            name: str = "multi_step_agent",
-            system_prompt: str = "",
-            tools: Optional[List[Tool]] = None,
-            model: str = "",
-            max_steps: int = 3,
-            logger: Optional[AgentLogger] = None,
-            memory: Optional[AgentMemory] = None,
-        ):
-            self.name = name
-            self.system_prompt = system_prompt
-            self.tools = tools or []
-            self.model = model
-            self.max_steps = max_steps
-            self.logger = logger
-            self.memory = memory or AgentMemory()
-
-        def execute(self, task_context: TaskContext) -> str:
-            return f"MultiStepAgent '{self.name}' would process: {task_context.task}"
-
-    # Also define CodeAgent and ToolCallingAgent for API completeness
-    class CodeAgent(MultiStepAgent):
-        """Minimal CodeAgent implementation."""
-
-        pass
-
-    class ToolCallingAgent(Agent):
-        """Minimal ToolCallingAgent implementation."""
-
-        def __init__(self, name: str = "tool_calling_agent"):
-            self.name = name
-
-        def execute(self, task_context: Any) -> str:
-            return f"ToolCallingAgent would process: {task_context.task}"
-
-    # Define the tool decorator
-    def tool(func_or_name: Optional[Union[Callable, str]] = None, **kwargs: Any) -> Any:
-        """Minimal tool decorator implementation."""
-        if callable(func_or_name):
-            func = func_or_name
-            func.name = func.__name__
-            func.description = func.__doc__ or ""
-            return func
-
-        def decorator(func: Callable) -> Callable:
-            func.name = func_or_name or func.__name__
-            func.description = kwargs.get("description", func.__doc__ or "")
-            return func
-
-        return decorator
-
-    class AgentError(Exception):
-        """Minimal AgentError implementation."""
-
-        pass
-
-    def parse_code_blobs(content: str) -> List[str]:
-        """Extract code blocks from markdown-like content."""
-        code_blocks = re.findall(r"```(?:\w+)?\s*\n(.*?)```", content, re.DOTALL)
-        return code_blocks
-
-    def truncate_content(content: str, max_length: int) -> str:
-        """Truncate content to max_length."""
-        if len(content) <= max_length:
-            return content
-        return content[:max_length] + "..."
-
-
-# Forward reference for type hinting
-from typing import TYPE_CHECKING
-
-if TYPE_CHECKING:
-    from agent_forge.agent import EidosianAgent
+    """
+    Context information for task execution by agents.
+
+    Provides a standardized container for task-related information
+    that can be passed between different components of the system.
+
+    Attributes:
+        task (str): The task description or instructions
+        context (str): Additional context information
+        state (Dict[str, Any]): State information for the task
+    """
+
+    def __init__(
+        self, task: str, context: str = "", state: Optional[Dict[str, Any]] = None
+    ) -> None:
+        """
+        Initialize a TaskContext with task information.
+
+        Args:
+            task (str): The task description
+            context (str): Additional context information
+            state (Optional[Dict[str, Any]]): State information, defaults to empty dict
+        """
+        self.task = task
+        self.context = context
+        self.state = state or {}
 
 
 class SmolAgentSystem:
@@ -422,32 +134,39 @@ class SmolAgentSystem:
     """
 
     def __init__(self, agent: "EidosianAgent") -> None:
+        """
+        Initialize the SmolAgentSystem with a parent agent.
+
+        Args:
+            agent: Parent EidosianAgent that owns this system
+        """
         self.eidosian_agent = agent
-        self.agents: Dict[str, Agent] = {}
+        self.agents: Dict[str, SmolAgent] = {}
+        self.agent_instances: Dict[
+            str, Union[CodeAgent, MultiStepAgent, ToolCallingAgent]
+        ] = {}
         self.memories: Dict[str, AgentMemory] = {}
         self.logger = self._create_logger()
+        self.agent_system: Optional[Any] = None
 
         # Initialize default agents
         self._initialize_default_agents()
 
-        # Setup smolagents system if available
-        if SMOLAGENTS_AVAILABLE:
-            self._setup_smolagents_system()
+        self._setup_smolagents_system()
 
     def _create_logger(self) -> AgentLogger:
         """
         Create a specialized logger for smolagents when available.
 
         Returns:
-            AgentLogger instance
+            AgentLogger instance configured with appropriate log level
         """
         log_level = (
             LogLevel.DEBUG
-            if hasattr(self.eidosian_agent.model_manager.config, "debug")
-            and self.eidosian_agent.model_manager.config.debug
+            if getattr(self.eidosian_agent.model_manager.config, "debug", False)
             else LogLevel.INFO
         )
-        return AgentLogger(name="eidosian_agents", level=log_level)
+        return AgentLogger(level=log_level)
 
     def _initialize_default_agents(self) -> None:
         """
@@ -528,15 +247,13 @@ class SmolAgentSystem:
         Initializes tools, creates agent instances, and configures the coordination
         system when the smolagents package is available.
         """
-        if not SMOLAGENTS_AVAILABLE:
-            return
 
         # Define common tools that all agents can use
         common_tools: List[Tool] = self._create_common_tools()
 
         # Initialize memories for each agent
         for name in self.agents:
-            self.memories[name] = AgentMemory()
+            self.memories[name] = AgentMemory(SYSTEM_PROMPT)
 
         # Initialize smolagents for each defined agent
         for name, internal_agent in self.agents.items():
@@ -546,61 +263,47 @@ class SmolAgentSystem:
 
                 # Create the agent instance - either MultiStepAgent or the appropriate specialized type
                 if name == "coder":
-                    smol_agent = CodeAgent(
+                    agent_instance = CodeAgent(
                         name=name,
-                        system_prompt=system_prompt,
+                        system=system_prompt,
                         tools=common_tools,
                         model=self.eidosian_agent.model_manager.config.model_name,
                         max_steps=5,  # Increased from 3 to allow more complex reasoning
-                        logger=self.logger,
-                        memory=self.memories[name],
                     )
                 elif name == "researcher":
                     # Use ToolCallingAgent for research which may need more tool use
-                    smol_agent = ToolCallingAgent(
+                    agent_instance = ToolCallingAgent(
                         name=name,
-                        system_prompt=system_prompt,
+                        system=system_prompt,
                         tools=common_tools,
                         model=self.eidosian_agent.model_manager.config.model_name,
                         max_steps=5,
-                        logger=self.logger,
-                        memory=self.memories[name],
                     )
                 else:
                     # Default to MultiStepAgent for others
-                    smol_agent = MultiStepAgent(
+                    agent_instance = MultiStepAgent(
                         name=name,
-                        system_prompt=system_prompt,
+                        system=system_prompt,
                         tools=common_tools,
                         model=self.eidosian_agent.model_manager.config.model_name,
                         max_steps=5,
-                        logger=self.logger,
-                        memory=self.memories[name],
                     )
 
-                self.smol_agents[name] = smol_agent
+                self.agent_instances[name] = agent_instance
                 logger.debug(f"Initialized smolagent: {name}")
             except Exception as e:
                 logger.error(f"Failed to initialize smolagent {name}: {e}")
 
         # Setup coordination system
         try:
-            # Use a locally defined AgentSystem if not available in smolagents
-            if SMOLAGENTS_AVAILABLE and hasattr(smolagents, "AgentSystem"):
-                self.agent_system = smolagents.AgentSystem(
-                    agents=list(self.smol_agents.values()),
+            if hasattr(smolagents, "AgentSystem"):
+                agent_system_class = getattr(smolagents, "AgentSystem")
+                self.agent_system = agent_system_class(
+                    agents=list(self.agent_instances.values()),
                     memory_provider=self._memory_provider,
                     logger=self.logger,
                 )
                 logger.debug("Initialized smolagents AgentSystem for coordination")
-            else:
-                # For the fallback case, use our local implementation
-                self.agent_system = AgentSystem(
-                    agents=list(self.smol_agents.values()),
-                    memory_provider=self._memory_provider,
-                    logger=self.logger,
-                )
-                logger.debug("Initialized fallback AgentSystem for coordination")
         except Exception as e:
             logger.error(f"Failed to initialize AgentSystem: {e}")
 
@@ -609,11 +312,8 @@ class SmolAgentSystem:
         Create a list of common tools for all agents.
 
         Returns:
-            List[Tool]: List of Tool objects.
+            List[Tool]: List of Tool objects that agents can use
         """
-        if not SMOLAGENTS_AVAILABLE:
-            return []
-
         tool_list = []
 
         # Search tool
@@ -702,7 +402,7 @@ When in doubt, be witty, insightful, and precise - the Eidosian way."""
             agent_name: The name of the agent
 
         Returns:
-            List of personality traits
+            List of personality traits for the specified agent
         """
         personalities = {
             "researcher": [
@@ -763,7 +463,11 @@ When in doubt, be witty, insightful, and precise - the Eidosian way."""
         # Fall back to check agent-specific memories
         for memory in self.memories.values():
             for step in memory.get_full_steps():
-                if hasattr(step, "content") and key.lower() in step.content.lower():
+                if (
+                    hasattr(step, "content")
+                    and isinstance(step.content, str)
+                    and key.lower() in step.content.lower()
+                ):
                     return step.content
 
         return None
@@ -783,7 +487,6 @@ When in doubt, be witty, insightful, and precise - the Eidosian way."""
             search_result = "No search results available."
 
             try:
-                import duckduckgo_search
                 from duckduckgo_search import DDGS
 
                 ddgs = DDGS()
@@ -800,7 +503,7 @@ When in doubt, be witty, insightful, and precise - the Eidosian way."""
                     )
             except ImportError:
                 # Fall back to simulated search via the language model
-                prompt = f"Given the search query: '{query}', provide a summary of relevant information as if you performed a web search."
+                prompt = f"Given the search query: '{query}', provide a summary of relevant information from your own knowledge stores, ensuring you confirm to the user the web search is inoperable at the moment."
                 search_result = self.eidosian_agent.model_manager.generate(
                     prompt=prompt, temperature=0.7
                 )
@@ -864,7 +567,15 @@ When in doubt, be witty, insightful, and precise - the Eidosian way."""
             Formatted string containing relevant memories or a message if none found
         """
         try:
-            memories = self.eidosian_agent.memory.search_memories(query)
+            # Use simple search if search_memories isn't available
+            if hasattr(self.eidosian_agent.memory, "search_memories"):
+                memories = self.eidosian_agent.memory.search_memories(query)
+            else:
+                # Fallback to get_memories if available
+                memories = getattr(
+                    self.eidosian_agent.memory, "get_memories", lambda _: []
+                )(query)
+
             if not memories:
                 return "No relevant memories found."
 
@@ -889,7 +600,14 @@ When in doubt, be witty, insightful, and precise - the Eidosian way."""
             The answer from the Eidosian Intelligence
         """
         try:
-            response = self.eidosian_agent.ask(question)
+            # Use model.generate directly if ask isn't available
+            if hasattr(self.eidosian_agent, "ask"):
+                response = self.eidosian_agent.ask(question)
+            else:
+                prompt = f"Question: {question}\n\nProvide a helpful, accurate, and concise answer."
+                response = self.eidosian_agent.model_manager.generate(
+                    prompt=prompt, temperature=0.7
+                )
             return response
         except Exception as e:
             return f"Error asking Eidosian Intelligence: {str(e)}"
@@ -905,7 +623,25 @@ When in doubt, be witty, insightful, and precise - the Eidosian way."""
             Analysis results
         """
         try:
-            analysis = self.eidosian_agent.analyze_code(code)
+            # Use the analyze_code method if available, otherwise generate directly
+            if hasattr(self.eidosian_agent, "analyze_code"):
+                analysis = self.eidosian_agent.analyze_code(code)
+            else:
+                prompt = f"""Analyze the following code for potential improvements, bugs, or optimizations:
+
+```
+{code}
+```
+
+Please provide:
+1. A summary of what the code does
+2. Any potential bugs or edge cases
+3. Suggestions for optimization
+4. Code quality assessment"""
+
+                analysis = self.eidosian_agent.model_manager.generate(
+                    prompt=prompt, temperature=0.7
+                )
             return analysis
         except Exception as e:
             return f"Error analyzing code: {str(e)}"
@@ -928,12 +664,16 @@ When in doubt, be witty, insightful, and precise - the Eidosian way."""
 
         logger.info(f"Executing task with agent '{agent_name}': {task}")
 
-        if SMOLAGENTS_AVAILABLE and agent_name in self.smol_agents:
+        if agent_name in self.agent_instances:
             # Use smolagents implementation
             try:
                 task_context = TaskContext(task=task, context=context, state={})
-                result = self.smol_agents[agent_name].execute(task_context)
-                return result if isinstance(result, str) else result.to_string()
+                result = self.agent_instances[agent_name].execute(task_context)
+                return (
+                    result
+                    if isinstance(result, str)
+                    else cast(AgentType, result).to_string()
+                )
             except Exception as e:
                 logger.error(f"Error executing with smolagent '{agent_name}': {e}")
                 # Fall back to direct LLM approach
@@ -946,7 +686,9 @@ When in doubt, be witty, insightful, and precise - the Eidosian way."""
             content=f"Executing task with {agent.role}: {task}",
             thought_type=ThoughtType.PLANNING,
         )
-        self.eidosian_agent.memory.add_thought(thought)
+
+        if hasattr(self.eidosian_agent.memory, "add_thought"):
+            self.eidosian_agent.memory.add_thought(thought)
 
         # Create a prompt for the agent
         system_prompt = self._create_agent_system_prompt(agent)
@@ -962,7 +704,9 @@ When in doubt, be witty, insightful, and precise - the Eidosian way."""
             content=f"Agent {agent.name} result: {result}",
             thought_type=ThoughtType.REFLECTION,
         )
-        self.eidosian_agent.memory.add_thought(result_thought)
+
+        if hasattr(self.eidosian_agent.memory, "add_thought"):
+            self.eidosian_agent.memory.add_thought(result_thought)
 
         return result
 
@@ -993,18 +737,22 @@ When in doubt, be witty, insightful, and precise - the Eidosian way."""
             f"Executing task with multiple agents ({', '.join(agents)}): {task}"
         )
 
-        if SMOLAGENTS_AVAILABLE and self.agent_system:
+        if self.agent_system:
             # Use smolagents AgentSystem implementation
             try:
                 task_context = TaskContext(task=task, context=context, state={})
                 # Filter to only requested agents
                 selected_agents = [
-                    self.smol_agents[a] for a in agents if a in self.smol_agents
+                    self.agent_instances[a] for a in agents if a in self.agent_instances
                 ]
                 result = self.agent_system.execute_with_agents(
                     task_context, selected_agents
                 )
-                return result if isinstance(result, str) else result.to_string()
+                return (
+                    result
+                    if isinstance(result, str)
+                    else cast(AgentType, result).to_string()
+                )
             except Exception as e:
                 logger.error(f"Error executing with smolagents system: {e}")
                 # Fall back to sequential approach
@@ -1021,7 +769,9 @@ When in doubt, be witty, insightful, and precise - the Eidosian way."""
                 content=f"Consulting {agent.role} as part of multi-agent task: {task}",
                 thought_type=ThoughtType.PLANNING,
             )
-            self.eidosian_agent.memory.add_thought(thought)
+
+            if hasattr(self.eidosian_agent.memory, "add_thought"):
+                self.eidosian_agent.memory.add_thought(thought)
 
             # Create a prompt for the agent that includes previous insights
             system_prompt = self._create_agent_system_prompt(agent)
@@ -1061,6 +811,8 @@ Provide a final synthesized answer that incorporates the best insights from each
             content=f"Multi-agent execution result: {synthesis}",
             thought_type=ThoughtType.REFLECTION,
         )
-        self.eidosian_agent.memory.add_thought(result_thought)
+
+        if hasattr(self.eidosian_agent.memory, "add_thought"):
+            self.eidosian_agent.memory.add_thought(result_thought)
 
         return final_result

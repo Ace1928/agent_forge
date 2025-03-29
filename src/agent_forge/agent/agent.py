@@ -9,7 +9,7 @@ import logging
 import time
 import uuid
 from datetime import datetime
-from typing import Any, List, Optional
+from typing import Dict, List, Optional
 
 from ..core import MemorySystem, Sandbox
 from ..models import ModelConfig, Task, Thought, ThoughtType
@@ -53,14 +53,14 @@ class EidosianAgent:
         self.config_manager = ConfigManager(config_path)
 
         # Set up memory system
-        memory_path = memory_path or self.config_manager.get(
+        memory_path_value = memory_path or self.config_manager.get(
             "memory.git_repo_path", "./memory_repo"
         )
         git_enabled = self.config_manager.get("memory.git_enabled", True)
         commit_interval = self.config_manager.get("memory.commit_interval_minutes", 30)
 
         self.memory = MemorySystem(
-            memory_path=memory_path,
+            memory_path=memory_path_value,  # Now guaranteed to be str
             git_enabled=git_enabled,
             auto_commit=auto_commit,
             commit_interval_minutes=commit_interval,
@@ -77,7 +77,7 @@ class EidosianAgent:
         self.model_manager = create_model_manager(self.model_config)
 
         # Set up sandbox
-        workspace_path = workspace_path or self.config_manager.get(
+        workspace_path_value = workspace_path or self.config_manager.get(
             "execution.workspace_path", "./workspace"
         )
         timeout_seconds = self.config_manager.get("execution.timeout_seconds", 60)
@@ -85,7 +85,7 @@ class EidosianAgent:
         allow_network = self.config_manager.get("execution.internet_access", True)
 
         self.sandbox = Sandbox(
-            workspace_dir=workspace_path,
+            workspace_dir=workspace_path_value,  # Now guaranteed to be str
             timeout_seconds=timeout_seconds,
             max_memory_mb=max_memory_mb,
             allow_network=allow_network,
@@ -212,7 +212,12 @@ class EidosianAgent:
             subtasks = self._decompose_task(task)
             for subtask in subtasks:
                 subtask.dependencies.append(task.task_id)
-                self.task_manager.add_task(subtask)
+                self.task_manager.add_task(
+                    description=subtask.description,  # Fixed: Pass description, not Task
+                    priority=subtask.priority,
+                    task_id=subtask.task_id,
+                    dependencies=subtask.dependencies,
+                )
 
             task.status = "decomposed"
             self.task_manager.update_task(task)
@@ -231,7 +236,26 @@ class EidosianAgent:
 
             if agent_required:
                 # Use specialized agent for this task
-                result = self.smol_agents.execute_task(task)
+                # Handle potential missing method by dynamically attempting execution
+                try:
+                    # Use getattr to safely access a potentially missing method
+                    execute_task_method = getattr(
+                        self.smol_agents, "execute_task", None
+                    )
+                    if execute_task_method and callable(execute_task_method):
+                        result = execute_task_method(task)
+                    else:
+                        # Fallback to our own execution if method doesn't exist
+                        logger.warning(
+                            "SmolAgentSystem.execute_task method not found, executing directly"
+                        )
+                        result = self._execute_task(task, plan)
+                except Exception as e:
+                    logger.error(
+                        f"Error calling smol agent execution: {e}", exc_info=True
+                    )
+                    # Fallback to direct execution
+                    result = self._execute_task(task, plan)
             else:
                 # Handle task ourselves
                 result = self._execute_task(task, plan)
@@ -376,14 +400,44 @@ class EidosianAgent:
         """
         Decide if a specialized agent is required for this task.
 
+        Examines task description against known agent capabilities.
+        Safely handles the case where capability detection methods might not exist.
+
         Args:
             task: Task to evaluate
 
         Returns:
-            True if smol agent should handle it, False otherwise
+            bool: True if smol agent should handle it, False otherwise
         """
-        # Get available agent capabilities
-        agent_capabilities = self.smol_agents.get_capabilities()
+        # Get available agent capabilities through safe dynamic access
+        agent_capabilities: Dict[str, List[str]] = {}
+
+        try:
+            # Use getattr for safe access to potentially missing method
+            get_capabilities_method = getattr(
+                self.smol_agents, "get_capabilities", None
+            )
+
+            if get_capabilities_method and callable(get_capabilities_method):
+                # Apply explicit type casting to ensure type safety
+                capabilities_result = get_capabilities_method()
+                if isinstance(capabilities_result, dict):
+                    # Verify and convert the returned dictionary to ensure type compliance
+                    for capability, keywords in capabilities_result.items():
+                        if isinstance(keywords, list):
+                            # Filter to ensure we only have string keywords
+                            string_keywords = [
+                                k for k in keywords if isinstance(k, str)
+                            ]
+                            if string_keywords:  # Only add if we have valid keywords
+                                agent_capabilities[str(capability)] = string_keywords
+            else:
+                logger.warning("SmolAgentSystem.get_capabilities method not found")
+                return False
+
+        except Exception as e:
+            logger.warning(f"Error accessing smol agent capabilities: {e}")
+            return False
 
         # Simple keyword matching for now
         task_lower = task.description.lower()
@@ -395,22 +449,23 @@ class EidosianAgent:
 
         return False
 
-    def _execute_task(self, task: Task, plan: str) -> Any:
+    def _execute_task(self, task: Task, plan: str) -> str:
         """
-        Execute a task directly.
+        Execute a task directly with appropriate handling based on task type.
+
+        Determines if a task is code-related or general knowledge based,
+        and routes it to the appropriate execution method. Uses the model to
+        generate responses for non-coding tasks.
 
         Args:
-            task: Task to execute
-            plan: Plan for execution
+            task: Task object containing description and metadata
+            plan: Structured approach for completing the task
 
         Returns:
-            Result of task execution
+            str: Result of the task execution as formatted text
         """
         # Determine if this is a code execution task
-        if (
-            "write code" in task.description.lower()
-            or "code" in task.description.lower()
-        ):
+        if self._is_coding_task(task.description):
             return self._execute_coding_task(task, plan)
 
         # For general tasks, we'll use the model to generate a response
@@ -427,6 +482,28 @@ class EidosianAgent:
 
         result = self.model_manager.generate(prompt=prompt, temperature=0.7)
         return result
+
+    def _is_coding_task(self, task_description: str) -> bool:
+        """
+        Determine if a task involves code writing or programming.
+
+        Args:
+            task_description: The textual description of the task
+
+        Returns:
+            bool: True if the task appears to be coding-related, False otherwise
+        """
+        coding_indicators = [
+            "write code",
+            "code",
+            "program",
+            "script",
+            "function",
+            "implement",
+        ]
+        task_lower = task_description.lower()
+
+        return any(indicator in task_lower for indicator in coding_indicators)
 
     def _execute_coding_task(self, task: Task, plan: str) -> str:
         """
@@ -581,14 +658,18 @@ class EidosianAgent:
 
     def _add_thought(self, content: str, thought_type: ThoughtType) -> str:
         """
-        Add a thought to memory.
+        Add a thought to the agent's memory system with proper linkage.
+
+        Creates a Thought object with the given content and type, links it to the
+        previous thought (if any), saves it to memory, and updates the last_thought_id
+        reference for future thought chaining.
 
         Args:
-            content: Thought content
-            thought_type: Type of thought
+            content: The textual content of the thought
+            thought_type: The categorical classification of the thought
 
         Returns:
-            ID of the saved thought
+            str: Unique identifier of the saved thought for future reference
         """
         thought = Thought(
             content=content,
@@ -602,30 +683,44 @@ class EidosianAgent:
 
     def handle_user_input(self, user_input: str) -> str:
         """
-        Process user input and generate a response.
+        Process user input and generate an appropriate response.
+
+        Analyzes user input to determine if it's a task request or a question,
+        handles it accordingly, and returns a contextually relevant response.
+        Automatically records the interaction in the agent's thought stream.
 
         Args:
-            user_input: Input from the user
+            user_input: The raw text input from the user
 
         Returns:
-            Agent response
+            str: Agent's response to the user input
         """
-        # Record the user input
+        # Record the user input in agent's thought stream
         self._add_thought(f"Received user input: {user_input}", ThoughtType.EXECUTION)
 
-        # If it looks like a task, add it to the task manager
-        if (
+        # Determine if input resembles a task instruction based on linguistic patterns
+        is_task_request = (
             user_input.startswith("Can you")
             or user_input.startswith("Please")
             or "?" not in user_input
-        ):
+        )
 
+        # If it looks like a task, add it to the task manager
+        if is_task_request:
+            task_id = f"task_{uuid.uuid4().hex[:8]}"
+
+            # Create task then add to manager with appropriate parameters
             task = Task(
                 description=user_input,
-                task_id=f"task_{uuid.uuid4().hex[:8]}",
+                task_id=task_id,
                 priority=10,  # High priority for user tasks
             )
-            self.task_manager.add_task(task)
+            self.task_manager.add_task(
+                description=task.description,
+                priority=task.priority,
+                task_id=task.task_id,
+                dependencies=task.dependencies,
+            )
 
             # Generate acknowledgment
             response = (

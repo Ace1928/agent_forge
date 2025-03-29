@@ -12,8 +12,13 @@ from datetime import datetime
 from pathlib import Path
 from typing import List, Optional
 
-from ..models import Memory, Task, Thought
-from ..utils import GitMemoryManager
+from agent_forge.models import Memory, Task, Thought, ThoughtType
+
+# Import GitMemoryManager only if available
+try:
+    from agent_forge.utils import GitMemoryManager
+except ImportError:
+    GitMemoryManager = None
 
 logger = logging.getLogger(__name__)
 
@@ -43,9 +48,9 @@ class MemorySystem:
             commit_interval_minutes: Interval between auto-commits in minutes
         """
         self.memory_path = Path(memory_path)
-        self.git_enabled = git_enabled
+        self.git_enabled = git_enabled and GitMemoryManager is not None
 
-        if git_enabled:
+        if self.git_enabled:
             self.git = GitMemoryManager(
                 repo_path=memory_path,
                 auto_commit=auto_commit,
@@ -54,9 +59,19 @@ class MemorySystem:
         else:
             os.makedirs(memory_path, exist_ok=True)
             # Create directory structure even without Git
-            memory_dirs = ["thoughts", "reflections", "tasks", "knowledge", "changes"]
+            memory_dirs = [
+                "thoughts",
+                "reflections",
+                "tasks",
+                "knowledge",
+                "changes",
+                "memories",
+            ]
             for d in memory_dirs:
                 os.makedirs(self.memory_path / d, exist_ok=True)
+            logger.info(
+                f"Git integration disabled or unavailable, using directory-based storage at {memory_path}"
+            )
 
     def save_thought(self, thought: Thought) -> str:
         """
@@ -72,7 +87,7 @@ class MemorySystem:
             f"{thought.timestamp.strftime('%Y%m%d%H%M%S')}_{uuid.uuid4().hex[:8]}"
         )
 
-        if self.git_enabled:
+        if self.git_enabled and hasattr(self, "git"):
             self.git.save_memory("thoughts", thought_id, thought.to_dict())
         else:
             # Save without Git
@@ -82,6 +97,9 @@ class MemorySystem:
 
         logger.debug(f"Saved thought: {thought_id}")
         return thought_id
+
+    # Add an alias for backward compatibility
+    add_thought = save_thought
 
     def save_memory(self, memory: Memory) -> str:
         """
@@ -97,7 +115,7 @@ class MemorySystem:
             f"{memory.timestamp.strftime('%Y%m%d%H%M%S')}_{uuid.uuid4().hex[:8]}"
         )
 
-        if self.git_enabled:
+        if self.git_enabled and hasattr(self, "git"):
             self.git.save_memory("memories", memory_id, memory.to_dict())
         else:
             # Save without Git
@@ -122,7 +140,7 @@ class MemorySystem:
         if not task.task_id:
             task.task_id = f"task_{uuid.uuid4().hex[:8]}"
 
-        if self.git_enabled:
+        if self.git_enabled and hasattr(self, "git"):
             self.git.save_memory("tasks", task.task_id, task.to_dict())
         else:
             # Save without Git
@@ -143,7 +161,8 @@ class MemorySystem:
         Returns:
             Thought object if found, None otherwise
         """
-        if self.git_enabled:
+        data = None
+        if self.git_enabled and hasattr(self, "git"):
             data = self.git.load_memory("thoughts", thought_id)
         else:
             thought_path = self.memory_path / "thoughts" / f"{thought_id}.json"
@@ -155,11 +174,17 @@ class MemorySystem:
 
         if data:
             # Convert back to Thought object
-            from ..models import ThoughtType
+            thought_type_str = data.get("type")
+            # Handle the case where thought_type might be None
+            thought_type = (
+                ThoughtType(thought_type_str)
+                if thought_type_str
+                else ThoughtType.UNKNOWN
+            )
 
             return Thought(
                 content=data["content"],
-                thought_type=ThoughtType(data["type"]),
+                thought_type=thought_type,
                 timestamp=datetime.fromisoformat(data["timestamp"]),
                 related_thoughts=data.get("related_thoughts", []),
                 metadata=data.get("metadata", {}),
@@ -180,15 +205,17 @@ class MemorySystem:
         Returns:
             List of Thought objects
         """
-        if self.git_enabled:
+        thought_ids = []
+        if self.git_enabled and hasattr(self, "git"):
             thought_ids = self.git.list_memories("thoughts")
         else:
             thought_dir = self.memory_path / "thoughts"
-            thought_ids = [
-                f.stem
-                for f in thought_dir.glob("*.json")
-                if f.is_file() and not f.name.startswith(".")
-            ]
+            if thought_dir.exists():
+                thought_ids = [
+                    f.stem
+                    for f in thought_dir.glob("*.json")
+                    if f.is_file() and not f.name.startswith(".")
+                ]
 
         # Sort by timestamp (which is encoded in the ID)
         thought_ids.sort(reverse=True)
@@ -200,7 +227,11 @@ class MemorySystem:
         for thought_id in thought_ids:
             thought = self.get_thought(thought_id)
             if thought and (
-                not thought_type or thought.thought_type.value == thought_type
+                not thought_type
+                or (
+                    hasattr(thought.thought_type, "value")
+                    and thought.thought_type.value == thought_type
+                )
             ):
                 thoughts.append(thought)
 
@@ -216,7 +247,8 @@ class MemorySystem:
         Returns:
             Task object if found, None otherwise
         """
-        if self.git_enabled:
+        data = None
+        if self.git_enabled and hasattr(self, "git"):
             data = self.git.load_memory("tasks", task_id)
         else:
             task_path = self.memory_path / "tasks" / f"{task_id}.json"
@@ -256,15 +288,17 @@ class MemorySystem:
 
         # Very simple search implementation for now
         # In a future pass, we can implement vector search or better text search
-        if self.git_enabled:
+        thought_ids = []
+        if self.git_enabled and hasattr(self, "git"):
             thought_ids = self.git.list_memories("thoughts")
         else:
             thought_dir = self.memory_path / "thoughts"
-            thought_ids = [
-                f.stem
-                for f in thought_dir.glob("*.json")
-                if f.is_file() and not f.name.startswith(".")
-            ]
+            if thought_dir.exists():
+                thought_ids = [
+                    f.stem
+                    for f in thought_dir.glob("*.json")
+                    if f.is_file() and not f.name.startswith(".")
+                ]
 
         for thought_id in thought_ids:
             thought = self.get_thought(thought_id)
@@ -274,6 +308,24 @@ class MemorySystem:
                     break
 
         return results
+
+    # Alias for search_memories method expected by some components
+    search_memories = search_thoughts
+
+    def get_memories(self, query: str, max_results: int = 10) -> List[Memory]:
+        """
+        Retrieve memories that match a query.
+
+        Args:
+            query: Search query string
+            max_results: Maximum number of results to return
+
+        Returns:
+            List of matching Memory objects
+        """
+        # Simple implementation for now
+        # This is a fallback for components that expect a get_memories method
+        return []  # In future versions, implement actual memory search
 
     def commit_changes(self, message: str) -> bool:
         """
@@ -285,7 +337,7 @@ class MemorySystem:
         Returns:
             True if successful, False otherwise
         """
-        if not self.git_enabled:
+        if not self.git_enabled or not hasattr(self, "git"):
             logger.warning("Git is not enabled, cannot commit changes")
             return False
 
@@ -293,6 +345,6 @@ class MemorySystem:
 
     def close(self) -> None:
         """Clean up resources."""
-        if self.git_enabled:
+        if self.git_enabled and hasattr(self, "git"):
             self.git.close()
         logger.info("Memory system closed")

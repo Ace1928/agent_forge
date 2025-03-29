@@ -9,7 +9,7 @@ import uuid
 from datetime import datetime
 from typing import Dict, List, Optional
 
-from ..models import Task
+from agent_forge.models import Task
 
 logger = logging.getLogger(__name__)
 
@@ -56,6 +56,7 @@ class TaskManager:
         """
         task_id = task_id or f"task_{uuid.uuid4().hex[:8]}"
 
+        # Birth the task from the quantum foam of possibility
         task = Task(
             description=description,
             task_id=task_id,
@@ -63,6 +64,10 @@ class TaskManager:
             status="pending",
             priority=priority,
             dependencies=dependencies or [],
+            result=None,
+            assigned_to=None,
+            deadline=None,
+            progress=0.0,  # All journeys begin at zero, yet contain infinite potential
         )
 
         self.tasks[task_id] = task
