@@ -30,7 +30,7 @@ class Step:
     name: str
     cmd: str
     budget_s: float
-    status: Literal["todo", "ok", "fail"]
+    status: Literal["todo", "running", "ok", "fail"]
     created_at: str
 
 

@@ -9,7 +9,14 @@ import time
 import json
 from dataclasses import dataclass
 from typing import Callable, Optional
-from core.state import add_plan, add_step, list_steps, list_steps_for_goal
+from core.state import (
+    add_plan,
+    add_step,
+    list_steps,
+    list_steps_for_goal,
+    list_plans,
+    list_runs,
+)
 from core.state import add_goal, list_goals
 from actuators.shell_exec import run_step
 from planners.registry import choose
@@ -81,9 +88,22 @@ def sense(ctx):  # existing hook: leave as-is if already present
 def plan(ctx, goal):
     kind, meta = choose(goal)
     p = add_plan(STATE_DIR, goal.id, kind, meta)
-    for s in materialize(meta["template"], goal.title):
+    steps = materialize(meta["template"], goal.title, vars=meta.get("vars"))
+    retries: dict[str, int] = {}
+    for s in steps:
         add_step(STATE_DIR, p.id, s["idx"], s["name"], json.dumps(s["cmd"]),
                  s["budget_s"], "todo")
+        retries[str(s["idx"])] = 1 if "test" in s["name"] else 0
+    meta_with_retries = dict(meta)
+    meta_with_retries["retries"] = retries
+    import sqlite3, pathlib
+    db = pathlib.Path(STATE_DIR) / "e3.sqlite"
+    conn = sqlite3.connect(db)
+    try:
+        conn.execute("UPDATE plans SET meta=? WHERE id=?", (json.dumps(meta_with_retries), p.id))
+        conn.commit()
+    finally:
+        conn.close()
     BUS.append(STATE_DIR, "plan.created", {"goal_id": goal.id, "plan_id": p.id})
 
 
@@ -95,19 +115,37 @@ def gate(ctx, step_row):
 
 def act(ctx, step_row):
     cmd = json.loads(step_row.cmd)
-    res = run_step(STATE_DIR, step_row.id, cmd, cwd=".", budget_s=step_row.budget_s)
+    import sqlite3, pathlib
+    db = pathlib.Path(STATE_DIR) / "e3.sqlite"
+    conn = sqlite3.connect(db)
+    try:
+        conn.execute("UPDATE steps SET status=? WHERE id=?", ("running", step_row.id))
+        conn.commit()
+    finally:
+        conn.close()
+    plan = next((p for p in list_plans(STATE_DIR) if p.id == step_row.plan_id), None)
+    template = plan.meta.get("template") if plan else None
+    res = run_step(STATE_DIR, step_row.id, cmd, cwd=".", budget_s=step_row.budget_s, template=template)
     BUS.append(STATE_DIR, "act.exec", {"step_id": step_row.id, "res": res})
     return res
 
 
 def verify(ctx, step_row, res):
-    # naive verification: rc==0 -> ok else fail
-    status = "ok" if res.get("rc", 1) == 0 and res.get("status") == "ok" else "fail"
-    # update DB status quickly (lightweight inline update)
     import sqlite3, pathlib
-    db = (pathlib.Path(STATE_DIR) / "e3.sqlite")
+    db = pathlib.Path(STATE_DIR) / "e3.sqlite"
     conn = sqlite3.connect(db)
     try:
+        status = "ok" if res.get("rc", 1) == 0 and res.get("status") == "ok" else "fail"
+        if status == "fail":
+            runs = list_runs(STATE_DIR, step_row.id)
+            plan = next((p for p in list_plans(STATE_DIR) if p.id == step_row.plan_id), None)
+            retries = int(plan.meta.get("retries", {}).get(str(step_row.idx), 0)) if plan else 0
+            attempts = len(runs)
+            if attempts <= retries:
+                conn.execute("UPDATE steps SET status=? WHERE id=?", ("todo", step_row.id))
+                conn.commit()
+                BUS.append(STATE_DIR, "verify.retry", {"step_id": step_row.id, "attempt": attempts})
+                return
         conn.execute("UPDATE steps SET status=? WHERE id=?", (status, step_row.id))
         conn.commit()
     finally:

@@ -1,6 +1,11 @@
 from __future__ import annotations
 from core.contracts import Goal
+
+
 def choose(goal: Goal) -> tuple[str, dict]:
-    if "hygiene" in goal.title.lower():
-        return "htn", {"template":"hygiene"}
-    return "htn", {"template":"hygiene"}  # default for now
+    title = goal.title.lower()
+    if "lint" in title:
+        return "htn", {"template": "lint"}
+    if "hygiene" in title:
+        return "htn", {"template": "hygiene", "vars": {"pytest_args": "-q"}}
+    return "htn", {"template": "hygiene", "vars": {"pytest_args": "-q"}}
