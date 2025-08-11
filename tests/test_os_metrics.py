@@ -5,7 +5,7 @@ from core import os_metrics as OM
 
 def test_process_stats_keys():
     stats = OM.process_stats()
-    assert set(stats) == {"rss_bytes", "cpu_user_s", "cpu_sys_s"}
+    assert {"rss_bytes", "cpu_user_s", "cpu_sys_s"}.issubset(stats)
     for v in stats.values():
         assert v is None or v >= 0
 

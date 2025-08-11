@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any, Mapping
 from datetime import datetime, timezone
 
-__all__ = ["init_db", "insert_metric", "insert_journal"]
+__all__ = ["init_db", "insert_metric", "insert_journal", "prune_metrics"]
 
 
 def init_db(base: str | Path = "state") -> Path:
@@ -28,6 +28,12 @@ def init_db(base: str | Path = "state") -> Path:
         )
         conn.execute(
             "CREATE TABLE IF NOT EXISTS journal(ts TEXT, type TEXT, text TEXT)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_metrics_key_ts ON metrics(key, ts)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_journal_ts ON journal(ts)"
         )
         conn.commit()
     finally:
@@ -56,6 +62,27 @@ def insert_journal(base: str | Path, etype: str, text: str, ts: str | None = Non
             (ts, etype, text),
         )
         conn.commit()
+    finally:
+        conn.close()
+
+
+def prune_metrics(base: str | Path, *, per_key_max: int = 10000) -> int:
+    """Keep only the newest ``per_key_max`` rows per key; return rows deleted."""
+    db = init_db(base)
+    conn = sqlite3.connect(db)
+    try:
+        keys = [r[0] for r in conn.execute("SELECT DISTINCT key FROM metrics")] 
+        deleted = 0
+        for key in keys:
+            cur = conn.execute(
+                "DELETE FROM metrics WHERE rowid IN ("
+                "SELECT rowid FROM metrics WHERE key=? ORDER BY ts DESC LIMIT -1 OFFSET ?"
+                ")",
+                (key, per_key_max),
+            )
+            deleted += cur.rowcount if cur.rowcount != -1 else 0
+        conn.commit()
+        return deleted
     finally:
         conn.close()
 

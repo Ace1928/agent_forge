@@ -10,3 +10,8 @@
 - **beat**: one scheduler iteration producing metrics and events.
 - **tick**: configured interval between beats.
 - **eidtop**: curses TUI showing recent beats and metrics.
+- **retention**: pruning strategy keeping metrics, events, and journal size bounded.
+- **maintenance cycle**: periodic run deleting old metrics and events and rotating journal.
+- **prune_metrics**: DB helper removing older metric rows beyond a per-key limit.
+- **prune_old_days**: event bus helper deleting day directories older than ``keep_days``.
+- **prune_journal**: wrapper rotating journal file when size exceeds threshold.

@@ -7,12 +7,17 @@ import os
 import time
 from typing import Dict, Optional
 
+try:  # optional psutil enrichment
+    import psutil  # type: ignore
+except Exception:  # pragma: no cover - optional
+    psutil = None
+
 __all__ = ["process_stats", "system_stats", "CpuPercent"]
 
 
 def _read_proc_stat() -> tuple[float, float]:
     """Return process user and system CPU times in seconds."""
-    clk = os.sysconf(os.sysconf_names.get("SC_CLK_TCK", -1))
+    clk = os.sysconf("SC_CLK_TCK")
     with open("/proc/self/stat", "r", encoding="utf-8") as f:
         parts = f.read().split()
     utime = float(parts[13]) / clk
@@ -26,6 +31,7 @@ def process_stats() -> Dict[str, Optional[float]]:
         "rss_bytes": None,
         "cpu_user_s": None,
         "cpu_sys_s": None,
+        "num_threads": None,
     }
     try:
         with open("/proc/self/statm", "r", encoding="utf-8") as f:
@@ -40,6 +46,12 @@ def process_stats() -> Dict[str, Optional[float]]:
         out["cpu_sys_s"] = stime
     except OSError:
         pass
+    if psutil is not None:
+        try:
+            proc = psutil.Process()
+            out["num_threads"] = float(proc.num_threads())
+        except Exception:
+            pass
     return out
 
 
@@ -52,6 +64,8 @@ def system_stats() -> Dict[str, Optional[float]]:
         "mem_total_kb": None,
         "mem_free_kb": None,
         "mem_available_kb": None,
+        "cpu_pct_total": None,
+        "swap_free_kb": None,
     }
     try:
         load1, load5, load15 = os.getloadavg()
@@ -74,6 +88,16 @@ def system_stats() -> Dict[str, Optional[float]]:
                 out[target] = float(meminfo[key])
     except OSError:
         pass
+    if psutil is not None:
+        try:
+            out["cpu_pct_total"] = float(psutil.cpu_percent(interval=None))
+        except Exception:
+            pass
+        try:
+            swap = psutil.swap_memory()
+            out["swap_free_kb"] = float(swap.free) / 1024
+        except Exception:
+            pass
     return out
 
 
