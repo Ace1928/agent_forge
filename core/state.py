@@ -18,7 +18,8 @@ Public API (stdlib only):
     migrate(base="state") -> int
     append_journal(base, text, *, etype="note", tags=None, extra=None) -> dict
     snapshot(base="state", *, last=5) -> dict
-    save_snapshot(base="state", snap=None) -> Path
+    save_snapshot(base="state", snap=None, name=None) -> Path
+    iter_journal(base, *, etype=None, tag=None, since=None, until=None, limit=10) -> list[dict]
 """
 
 from __future__ import annotations
@@ -29,7 +30,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Mapping, Tuple
 
-__all__ = ["migrate", "append_journal", "snapshot", "save_snapshot"]
+__all__ = ["migrate", "append_journal", "snapshot", "save_snapshot", "iter_journal"]
 
 SCHEMA_VERSION = 1
 
@@ -96,6 +97,45 @@ def append_journal(
         f.write(json.dumps(evt, ensure_ascii=False) + "\n")
     return evt
 
+
+def iter_journal(
+    base: str | Path,
+    *,
+    etype: str | None = None,
+    tag: str | None = None,
+    since: str | None = None,
+    until: str | None = None,
+    limit: int | None = 10,
+) -> List[Dict[str, Any]]:
+    """Return journal events matching filters (AND)."""
+    b = Path(base)
+    p = _p(b)["journal"]
+    out: List[Dict[str, Any]] = []
+    if not p.exists():
+        return out
+    with p.open("r", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                evt = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            t = str(evt.get("ts", ""))
+            if since and t < since:
+                continue
+            if until and t > until:
+                continue
+            if etype and str(evt.get("type", "")) != etype:
+                continue
+            if tag and tag not in (evt.get("tags") or []):
+                continue
+            out.append(evt)
+    if limit is not None and limit >= 0:
+        out = out[-limit:]
+    return out
+
 # ---------- snapshot ----------
 
 def snapshot(base: str | Path = "state", *, last: int = 5) -> Dict[str, Any]:
@@ -144,7 +184,11 @@ def snapshot(base: str | Path = "state", *, last: int = 5) -> Dict[str, Any]:
     }
 
 
-def save_snapshot(base: str | Path = "state", snap: Dict[str, Any] | None = None) -> Path:
+def save_snapshot(
+    base: str | Path = "state",
+    snap: Dict[str, Any] | None = None,
+    name: str | None = None,
+) -> Path:
     """Persist a snapshot to ``state/snaps`` and return the file path."""
     b = Path(base)
     _ensure_dirs(b)
@@ -153,7 +197,10 @@ def save_snapshot(base: str | Path = "state", snap: Dict[str, Any] | None = None
     snap = snap or snapshot(b)
     ts = snap.get("generated_at") or _now_iso()
     safe = ts.replace(":", "").replace("+00:00", "Z").replace("+", "Z")
-    out = p["snaps"] / f"{safe}.json"
+    label = ""
+    if name:
+        label = "-" + "".join(ch if ch.isalnum() or ch in "-_" else "-" for ch in name).strip("-")
+    out = p["snaps"] / f"{safe}{label}.json"
     tmp = out.with_suffix(out.suffix + ".tmp")
     tmp.write_text(json.dumps(snap, indent=2), encoding="utf-8")
     os.replace(tmp, out)

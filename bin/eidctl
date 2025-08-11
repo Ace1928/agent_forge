@@ -17,7 +17,7 @@ from pathlib import Path as _P
 sys.path.insert(0, str(_P(__file__).resolve().parents[1]))
 
 # local import; stdlib only
-from core.state import migrate, snapshot, append_journal, save_snapshot  # type: ignore
+from core.state import migrate, snapshot, append_journal, save_snapshot, iter_journal  # type: ignore
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -35,12 +35,20 @@ def main(argv: list[str] | None = None) -> int:
         p_state.add_argument("--migrate", action="store_true", help="ensure directories/version exist")
         p_state.add_argument("--last", type=int, default=5, help="number of recent events to display")
         p_state.add_argument("--save", action="store_true", help="save snapshot to state/snaps")
+        p_state.add_argument("--name", help="optional label for --save filename")
 
-        p_journal = sub.add_parser("journal", help="append to journal")
+        p_journal = sub.add_parser("journal", help="append or inspect journal")
         p_journal.add_argument("--dir", default="state", help="state directory")
-        p_journal.add_argument("--add", metavar="TEXT", help="text to append as a journal note")
-        p_journal.add_argument("--type", default="note", help="event type, e.g. goal.created")
+        mode = p_journal.add_mutually_exclusive_group()
+        mode.add_argument("--add", metavar="TEXT", help="append a journal note (or pipe via STDIN)")
+        mode.add_argument("--list", action="store_true", help="list entries")
+        p_journal.add_argument("--type", dest="etype", help="event type or filter by exact type")
         p_journal.add_argument("--tags", help="comma-separated tags", default="")
+        p_journal.add_argument("--tag", help="filter by tag")
+        p_journal.add_argument("--since", help="ISO8601 Z lower bound (inclusive)")
+        p_journal.add_argument("--until", help="ISO8601 Z upper bound (inclusive)")
+        p_journal.add_argument("--limit", type=int, default=10, help="max entries to return")
+        p_journal.add_argument("--json", action="store_true", help="JSON output")
 
         args = ap.parse_args(argv)
 
@@ -49,7 +57,7 @@ def main(argv: list[str] | None = None) -> int:
                 migrate(args.dir)
             snap = snapshot(args.dir, last=args.last)
             if args.save:
-                path = save_snapshot(args.dir, snap)
+                path = save_snapshot(args.dir, snap, name=args.name)
                 print(f"[state] saved snapshot -> {path}")
             if args.json:
                 print(json.dumps(snap, indent=2))
@@ -58,13 +66,29 @@ def main(argv: list[str] | None = None) -> int:
             return 0
 
         if args.cmd == "journal":
+            if args.list:
+                items = iter_journal(
+                    args.dir,
+                    etype=args.etype,
+                    tag=args.tag,
+                    since=args.since,
+                    until=args.until,
+                    limit=args.limit,
+                )
+                if args.json:
+                    print(json.dumps(items, indent=2))
+                else:
+                    for e in items:
+                        tags = f" [{', '.join(e.get('tags', []))}]" if e.get('tags') else ""
+                        print(f"{e.get('ts')}  {e.get('type')}: {e.get('text')}{tags}")
+                return 0
             if not args.add:
                 if not sys.stdin.isatty():
                     args.add = sys.stdin.read().strip()
             if not args.add:
                 p_journal.error("journal requires --add TEXT (or pipe text to STDIN)")
             tags = [t for t in (args.tags.split(",") if args.tags else []) if t]
-            evt = append_journal(args.dir, args.add, etype=args.type, tags=tags)
+            evt = append_journal(args.dir, args.add, etype=args.etype or "note", tags=tags)
             print(f"[journal] appended: {evt['type']} @ {evt['ts']}")
             return 0
 
