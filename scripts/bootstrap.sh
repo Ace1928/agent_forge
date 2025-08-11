@@ -26,6 +26,7 @@ main() {
   # shellcheck disable=SC1091
   source "$root_dir/.venv/bin/activate"
   python -m pip install -U pip wheel >/dev/null
+  python -m pip install --quiet pyyaml
 
   say "Touch state files"
   : >"$root_dir/state/events/.keep"
