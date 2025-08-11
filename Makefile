@@ -13,3 +13,8 @@ loop:
 	bin/eidosd --state-dir state --loop --tick 1 --max-beats 5
 	# quick health:
 	sqlite3 state/e3.sqlite "select key,count(*) from metrics group by key order by key;"
+
+.PHONY: loop-prune
+loop-prune:
+	bin/eidosd --state-dir state --loop --tick 0.5 --max-beats 300
+	sqlite3 state/e3.sqlite "select key,count(*) from metrics group by key order by key;"

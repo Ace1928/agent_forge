@@ -15,11 +15,12 @@ Public API:
 from __future__ import annotations
 import json
 import os
-from datetime import datetime, timezone
+import shutil
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Mapping
 
-__all__ = ["append", "iter_events", "files_count"]
+__all__ = ["append", "iter_events", "files_count", "prune_old_days"]
 
 
 def append(
@@ -114,6 +115,31 @@ def files_count(base: str | Path) -> int:
     b = Path(base)
     events_dir = b / "events"
     return sum(1 for _ in events_dir.rglob("bus-*.jsonl"))
+
+
+def prune_old_days(base: str | Path, *, keep_days: int = 7) -> int:
+    """Delete ``events/YYYYMMDD`` directories older than ``keep_days``."""
+    b = Path(base) / "events"
+    today = datetime.utcnow().date()
+    cutoff = today - timedelta(days=keep_days)
+    deleted = 0
+    if not b.exists():
+        return 0
+    for day_dir in b.iterdir():
+        if not day_dir.is_dir():
+            continue
+        name = day_dir.name
+        try:
+            dt = datetime.strptime(name, "%Y%m%d").date()
+        except ValueError:
+            continue
+        if dt < cutoff:
+            try:
+                shutil.rmtree(day_dir)
+                deleted += 1
+            except OSError:
+                continue
+    return deleted
 
 
 def _now_iso() -> str:

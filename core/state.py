@@ -37,6 +37,7 @@ __all__ = [
     "save_snapshot",
     "iter_journal",
     "rotate_journal",
+    "prune_journal",
     "load_snapshot",
     "diff_snapshots",
 ]
@@ -166,6 +167,11 @@ def rotate_journal(
     jp.rename(rot)
     jp.touch()
     return rot
+
+
+def prune_journal(base: str | Path, *, max_bytes: int = 5 * 1024 * 1024) -> Path | None:
+    """Rotate journal if it exceeds ``max_bytes``; return rotated path or ``None``."""
+    return rotate_journal(base, max_bytes=max_bytes)
 
 
 def load_snapshot(path: str | Path) -> Dict[str, Any]:
