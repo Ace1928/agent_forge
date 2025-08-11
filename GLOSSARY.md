@@ -20,3 +20,6 @@
 - **step**: single command within a plan, executed sequentially.
 - **run**: record of executing a step including start/end times and return code.
 - **corr_id**: correlation identifier connecting events across a workflow.
+- **approvals**: allow/deny gate applied before executing shell commands.
+- **sandbox**: resource-limited execution environment preventing escapes.
+- **HTN**: hierarchical task network planner using templates to expand goals into steps.

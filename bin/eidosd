@@ -23,7 +23,7 @@ from core import scheduler as SCH  # type: ignore
 
 
 def run_once(state_dir: str, *, tick_secs: float, cpu: OM.CpuPercent) -> None:
-    """Execute one beat: collect metrics, emit event, journal."""
+    """Execute one beat: collect metrics, emit event, journal, and scheduler step."""
     p = OM.process_stats()
     s = OM.system_stats()
     cpu_pct = cpu.sample()
@@ -56,6 +56,25 @@ def run_once(state_dir: str, *, tick_secs: float, cpu: OM.CpuPercent) -> None:
     E.append(state_dir, "daemon.beat", payload, tags=["daemon", "beat"])
     S.append_journal(state_dir, "daemon.beat", etype="daemon.beat")
 
+    # scheduler heartbeat
+    SCH.STATE_DIR = state_dir
+    SCH.sense({})
+    gs = S.list_goals(state_dir)
+    if not gs:
+        S.add_goal(state_dir, "Hygiene: format & smoke", "integrity")
+        gs = S.list_goals(state_dir)
+    goal = gs[0]
+    steps = S.list_steps_for_goal(state_dir, goal.id)
+    if not steps:
+        SCH.plan({}, goal)
+    else:
+        todo = [s for s in steps if s.status == "todo"]
+        if todo:
+            s = todo[0]
+            if SCH.gate({}, s):
+                res = SCH.act({}, s)
+                SCH.verify({}, s, res)
+
 
 def _load_cfg() -> dict:
     cfg_path = _P("cfg/self.yaml")
@@ -71,7 +90,8 @@ def _load_cfg() -> dict:
 
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="eidosd", description="Minimal Eidos daemon")
-    ap.add_argument("--state-dir", default="state", help="state directory")
+    ap.add_argument("--state-dir", dest="state_dir", default="state", help="state directory")
+    ap.add_argument("--dir", dest="state_dir", help="state directory")
     ap.add_argument("--once", action="store_true", help="run one cycle then exit")
     ap.add_argument("--loop", action="store_true", help="run scheduler loop")
     ap.add_argument("--tick", type=float, help="seconds between beats")
@@ -101,10 +121,7 @@ def main(argv: list[str] | None = None) -> int:
     cpu = OM.CpuPercent()
     if args.once:
         try:
-            DB.insert_metric(args.state_dir, "daemon.heartbeat", random.random())
-            DB.insert_journal(args.state_dir, "daemon", "once")
-            E.append(args.state_dir, "daemon.once", {"pid": os.getpid()})
-            S.append_journal(args.state_dir, "daemon once", etype="daemon.once")
+            run_once(args.state_dir, tick_secs=tick_secs, cpu=cpu)
             return 0
         except Exception as e:
             print(f"eidosd run error: {e}", file=sys.stderr)
