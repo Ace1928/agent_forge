@@ -28,7 +28,6 @@ from core.state import (  # type: ignore
     diff_snapshots,
 )
 
-
 def main(argv: list[str] | None = None) -> int:
     try:
         ap = argparse.ArgumentParser(
@@ -51,7 +50,6 @@ def main(argv: list[str] | None = None) -> int:
             metavar=("A", "B"),
             help="diff two snapshot files (paths). Use with --json for machine output.",
         )
-
         p_journal = sub.add_parser("journal", help="append or inspect journal")
         p_journal.add_argument("--dir", default="state", help="state directory")
         mode = p_journal.add_mutually_exclusive_group()

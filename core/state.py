@@ -145,7 +145,6 @@ def iter_journal(
         out = out[-limit:]
     return out
 
-
 def rotate_journal(
     base: str | Path,
     *,
