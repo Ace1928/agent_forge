@@ -17,7 +17,16 @@ from pathlib import Path as _P
 sys.path.insert(0, str(_P(__file__).resolve().parents[1]))
 
 # local import; stdlib only
-from core.state import migrate, snapshot, append_journal, save_snapshot, iter_journal  # type: ignore
+from core.state import (  # type: ignore
+    migrate,
+    snapshot,
+    append_journal,
+    save_snapshot,
+    iter_journal,
+    rotate_journal,
+    load_snapshot,
+    diff_snapshots,
+)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -36,12 +45,19 @@ def main(argv: list[str] | None = None) -> int:
         p_state.add_argument("--last", type=int, default=5, help="number of recent events to display")
         p_state.add_argument("--save", action="store_true", help="save snapshot to state/snaps")
         p_state.add_argument("--name", help="optional label for --save filename")
+        p_state.add_argument(
+            "--diff",
+            nargs=2,
+            metavar=("A", "B"),
+            help="diff two snapshot files (paths). Use with --json for machine output.",
+        )
 
         p_journal = sub.add_parser("journal", help="append or inspect journal")
         p_journal.add_argument("--dir", default="state", help="state directory")
         mode = p_journal.add_mutually_exclusive_group()
         mode.add_argument("--add", metavar="TEXT", help="append a journal note (or pipe via STDIN)")
         mode.add_argument("--list", action="store_true", help="list entries")
+        mode.add_argument("--rotate", action="store_true", help="rotate journal file")
         p_journal.add_argument("--type", dest="etype", help="event type or filter by exact type")
         p_journal.add_argument("--tags", help="comma-separated tags", default="")
         p_journal.add_argument("--tag", help="filter by tag")
@@ -49,10 +65,27 @@ def main(argv: list[str] | None = None) -> int:
         p_journal.add_argument("--until", help="ISO8601 Z upper bound (inclusive)")
         p_journal.add_argument("--limit", type=int, default=10, help="max entries to return")
         p_journal.add_argument("--json", action="store_true", help="JSON output")
+        p_journal.add_argument(
+            "--max-bytes",
+            type=int,
+            default=5 * 1024 * 1024,
+            help="rotate threshold in bytes (with --rotate)",
+        )
+        p_journal.add_argument(
+            "--force", action="store_true", help="rotate even if under threshold"
+        )
 
         args = ap.parse_args(argv)
 
         if args.cmd == "state":
+            if args.diff:
+                a, b = args.diff
+                da = load_snapshot(a)
+                db = load_snapshot(b)
+                d = diff_snapshots(da, db)
+                out = json.dumps(d, indent=2) if args.json else d
+                print(out if isinstance(out, str) else json.dumps(out, indent=2))
+                return 0
             if args.migrate:
                 migrate(args.dir)
             snap = snapshot(args.dir, last=args.last)
@@ -66,6 +99,15 @@ def main(argv: list[str] | None = None) -> int:
             return 0
 
         if args.cmd == "journal":
+            if args.rotate:
+                rot = rotate_journal(
+                    args.dir, max_bytes=args.max_bytes, force=args.force
+                )
+                if rot:
+                    print(f"[journal] rotated -> {rot}")
+                else:
+                    print("[journal] no rotation needed")
+                return 0
             if args.list:
                 items = iter_journal(
                     args.dir,
