@@ -7,3 +7,9 @@ smoke:
 	bin/eidosd --state-dir state --once
 	bin/eidctl state --json | jq -e '.totals.note >= 1 and .files.bus >= 1'
 	.venv/bin/python -m pytest -q
+
+.PHONY: loop
+loop:
+	bin/eidosd --state-dir state --loop --tick 1 --max-beats 5
+	# quick health:
+	sqlite3 state/e3.sqlite "select key,count(*) from metrics group by key order by key;"

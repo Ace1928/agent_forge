@@ -25,7 +25,7 @@ def test_eidosd_once(tmp_path: Path):
     assert res.returncode == 0, res.stderr
 
     conn = sqlite3.connect(state_dir / "e3.sqlite")
-    assert conn.execute("SELECT count(*) FROM metrics").fetchone()[0] == 1
+    assert conn.execute("SELECT count(*) FROM metrics").fetchone()[0] >= 1
     assert conn.execute("SELECT count(*) FROM journal").fetchone()[0] == 1
     conn.close()
 

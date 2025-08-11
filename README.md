@@ -4,8 +4,8 @@ Minimal scaffolding for the Eidos E3 system.
 
 ## CLI tools
 - `bin/eidctl` – inspect state snapshots and manage the JSONL journal.
-- `bin/eidosd` – daemon shim; `--once` writes a metric to SQLite, emits an event,
-  and appends a journal note.
+- `bin/eidosd` – daemon shim; `--once` runs one beat, `--loop` runs a scheduler collecting metrics
+- `bin/eidtop` – curses TUI for live beats and metrics.
 
 ## Core modules
 - `core/config.py` – strict YAML config loader.
@@ -29,3 +29,18 @@ dependencies like PyYAML are present:
 
 Run `make smoke` for an end-to-end verification of the bootstrap, state,
 journal, and test flow.
+
+## Daemon loop
+
+Run the scheduler:
+
+```
+bin/eidosd --state-dir state --loop --tick 5
+```
+
+## eidtop
+
+```
+bin/eidtop --state-dir state
+```
+Keys: `q` quit, `r` refresh.
