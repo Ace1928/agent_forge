@@ -9,3 +9,5 @@ datasets/sessions/
 *.log
 .env
 .DS_Store
+# Local live config (seeded from cfg.sample)
+cfg/
