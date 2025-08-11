@@ -46,10 +46,10 @@ main() {
   # shellcheck disable=SC1091
   source "$root_dir/.venv/bin/activate"
   if command -v uv >/dev/null 2>&1; then
-    uv pip install -r "$root_dir/pyproject.toml" >/dev/null
+    uv sync --dev >/dev/null
   else
     python -m pip install -U pip wheel >/dev/null
-    python -m pip install --quiet 'pyyaml>=6,<7'
+    python -m pip install --quiet 'pyyaml>=6,<7' 'pytest>=8.4'
   fi
 
   say "Touch state files"
