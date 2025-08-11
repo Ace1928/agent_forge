@@ -216,8 +216,11 @@ def snapshot(base: str | Path = "state", *, last: int = 5) -> Dict[str, Any]:
         last_events = buf[-last:] if last > 0 else []
 
     # files (quick health signal)
+    from . import events as _events  # local import to avoid circular
+
     files = {
         "events": _file_count(_p(b)["events"]),
+        "bus": _events.files_count(b),
         "vector_store": _file_count(b / "vector_store"),
         "weights": _file_count(b / "weights"),
         "adapters": _file_count(b / "adapters"),

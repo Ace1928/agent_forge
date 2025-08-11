@@ -1,0 +1,52 @@
+#!/usr/bin/env python3
+"""eidosd — tiny daemon shim for Eidos E3.
+
+Current capability: ``--once`` writes one metric to SQLite, emits a bus event,
+and appends a journal note, then exits.
+"""
+
+from __future__ import annotations
+import argparse
+import sys
+from pathlib import Path as _P
+import os
+import random
+
+# add repo root to sys.path for local imports
+sys.path.insert(0, str(_P(__file__).resolve().parents[1]))
+
+from core import state as S  # type: ignore
+from core import events as E  # type: ignore
+from core import db as DB    # type: ignore
+
+
+def main(argv: list[str] | None = None) -> int:
+    ap = argparse.ArgumentParser(prog="eidosd", description="Minimal Eidos daemon")
+    ap.add_argument("--state-dir", default="state", help="state directory")
+    ap.add_argument("--once", action="store_true", help="run one cycle then exit")
+    args = ap.parse_args(argv)
+
+    try:
+        S.migrate(args.state_dir)
+        DB.init_db(args.state_dir)
+    except Exception as e:
+        print(f"eidosd setup error: {e}", file=sys.stderr)
+        return 1
+
+    if args.once:
+        try:
+            DB.insert_metric(args.state_dir, "daemon.heartbeat", random.random())
+            DB.insert_journal(args.state_dir, "daemon", "once")
+            E.append(args.state_dir, "daemon.once", {"pid": os.getpid()})
+            S.append_journal(args.state_dir, "daemon once", etype="daemon.once")
+            return 0
+        except Exception as e:
+            print(f"eidosd run error: {e}", file=sys.stderr)
+            return 2
+    else:
+        ap.error("only --once implemented in phase 0")
+        return 2
+
+
+if __name__ == "__main__":  # pragma: no cover
+    sys.exit(main())
