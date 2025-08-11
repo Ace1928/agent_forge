@@ -1,0 +1,122 @@
+#!/usr/bin/env python3
+"""Tiny curses TUI showing recent daemon beats and metrics."""
+
+from __future__ import annotations
+import argparse
+import curses
+import sqlite3
+from pathlib import Path
+from typing import Dict, List, Tuple
+
+import sys
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from core import events as E  # type: ignore
+
+METRIC_NAMES = [
+    "process.rss_bytes",
+    "process.cpu_user_s",
+    "process.cpu_sys_s",
+    "process.cpu_pct",
+    "system.load1",
+    "system.load5",
+    "system.load15",
+    "system.mem_total_kb",
+    "system.mem_free_kb",
+    "system.mem_available_kb",
+]
+
+
+def gather_model(state_dir: str) -> Dict[str, object]:
+    events = [e for e in E.iter_events(state_dir, limit=200) if e.get("type") == "daemon.beat"][-20:]
+    metrics: Dict[str, List[Tuple[str, float]]] = {k: [] for k in METRIC_NAMES}
+    db_path = Path(state_dir) / "e3.sqlite"
+    if db_path.exists():
+        conn = sqlite3.connect(db_path)
+        try:
+            for name in METRIC_NAMES:
+                rows = conn.execute(
+                    "SELECT ts, value FROM metrics WHERE key=? ORDER BY ts DESC LIMIT 20", (name,)
+                ).fetchall()
+                metrics[name] = list(reversed(rows))
+        finally:
+            conn.close()
+    return {"events": events, "metrics": metrics}
+
+
+def _human_bytes(n: float | int | None) -> str:
+    if n is None:
+        return "?"
+    n = float(n)
+    for unit in ["B", "KB", "MB", "GB"]:
+        if n < 1024:
+            return f"{n:.1f}{unit}"
+        n /= 1024
+    return f"{n:.1f}TB"
+
+
+def render(model: Dict[str, object]) -> List[str]:
+    lines: List[str] = []
+    events: List[Dict[str, object]] = model.get("events", [])  # type: ignore
+    last = events[-1] if events else {}
+    data = last.get("data", {}) if isinstance(last, dict) else {}
+    ts = last.get("ts", "-")
+    cpu = data.get("cpu_pct")
+    rss = _human_bytes(data.get("rss_bytes"))
+    load1 = data.get("load1")
+    tick = data.get("tick_secs")
+    lines.append(f"last {ts} | cpu {cpu} | rss {rss} | load1 {load1} | tick {tick}")
+    metrics: Dict[str, List[Tuple[str, float]]] = model.get("metrics", {})  # type: ignore
+    for name in METRIC_NAMES:
+        vals = [v for _, v in metrics.get(name, [])][-10:]
+        if vals:
+            spark = "".join(_spark(vals))
+            lines.append(f"{name:25s} {vals[-1]:>8.2f} {spark}")
+    lines.append("[q] quit  [r] refresh")
+    return lines
+
+
+_SPARKS = "▁▂▃▄▅▆▇"
+
+
+def _spark(vals: List[float]) -> List[str]:
+    if not vals:
+        return []
+    mn, mx = min(vals), max(vals)
+    span = mx - mn or 1.0
+    out = []
+    for v in vals:
+        idx = int((v - mn) / span * (len(_SPARKS) - 1))
+        out.append(_SPARKS[idx])
+    return out
+
+
+def main(argv: List[str] | None = None) -> int:
+    ap = argparse.ArgumentParser(prog="eidtop", description="Tiny TUI for Eidos")
+    ap.add_argument("--state-dir", default="state")
+    args = ap.parse_args(argv)
+
+    def _loop(stdscr):
+        curses.curs_set(0)
+        while True:
+            model = gather_model(args.state_dir)
+            lines = render(model)
+            stdscr.erase()
+            for i, line in enumerate(lines):
+                try:
+                    stdscr.addstr(i, 0, line[: curses.COLS - 1])
+                except curses.error:
+                    pass
+            stdscr.refresh()
+            stdscr.timeout(1000)
+            ch = stdscr.getch()
+            if ch in (ord("q"), ord("Q")):
+                break
+            if ch in (ord("r"), ord("R")):
+                continue
+    curses.wrapper(_loop)
+    return 0
+
+
+if __name__ == "__main__":  # pragma: no cover
+    raise SystemExit(main())
