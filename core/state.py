@@ -26,9 +26,13 @@ from __future__ import annotations
 import dataclasses as dc
 import json
 import os
+import sqlite3
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Mapping, Tuple
+
+from .contracts import Goal, Plan, Step, Run
 
 __all__ = [
     "migrate",
@@ -40,6 +44,16 @@ __all__ = [
     "prune_journal",
     "load_snapshot",
     "diff_snapshots",
+    # entity DAL
+    "add_goal",
+    "list_goals",
+    "add_plan",
+    "list_plans",
+    "add_step",
+    "list_steps",
+    "list_steps_for_goal",
+    "add_run",
+    "list_runs",
 ]
 
 SCHEMA_VERSION = 1
@@ -191,6 +205,212 @@ def diff_snapshots(a: Mapping[str, Any], b: Mapping[str, Any]) -> Dict[str, Any]
         "from": {"generated_at": a.get("generated_at"), "schema": a.get("schema")},
         "to": {"generated_at": b.get("generated_at"), "schema": b.get("schema")},
     }
+
+# ---------- entity DAL ----------
+
+
+def _db(base: str | Path) -> Path:
+    b = Path(base)
+    _ensure_dirs(b)
+    db_path = b / "e3.sqlite"
+    conn = sqlite3.connect(db_path)
+    try:
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS goals(id TEXT PRIMARY KEY, title TEXT, drive TEXT, created_at TEXT)"
+        )
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS plans(id TEXT PRIMARY KEY, goal_id TEXT, kind TEXT, meta TEXT, created_at TEXT)"
+        )
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS steps(id TEXT PRIMARY KEY, plan_id TEXT, idx INTEGER, name TEXT, cmd TEXT, budget_s REAL, status TEXT, created_at TEXT)"
+        )
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS runs(id TEXT PRIMARY KEY, step_id TEXT, started_at TEXT, ended_at TEXT, rc INTEGER, bytes_out INTEGER, notes TEXT)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_steps_plan ON steps(plan_id, idx)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_runs_step ON runs(step_id, started_at)"
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    return db_path
+
+
+def _new_id() -> str:
+    return uuid.uuid4().hex
+
+
+def add_goal(base: str | Path, title: str, drive: str, *, id: str | None = None, created_at: str | None = None) -> Goal:
+    g = Goal(id or _new_id(), title, drive, created_at or _now_iso())
+    db = _db(base)
+    conn = sqlite3.connect(db)
+    try:
+        conn.execute(
+            "INSERT INTO goals(id, title, drive, created_at) VALUES (?,?,?,?)",
+            (g.id, g.title, g.drive, g.created_at),
+        )
+        conn.commit()
+        return g
+    finally:
+        conn.close()
+
+
+def list_goals(base: str | Path) -> List[Goal]:
+    db = _db(base)
+    conn = sqlite3.connect(db)
+    try:
+        cur = conn.execute("SELECT id, title, drive, created_at FROM goals ORDER BY created_at")
+        return [Goal(*row) for row in cur.fetchall()]
+    finally:
+        conn.close()
+
+
+def add_plan(
+    base: str | Path,
+    goal_id: str,
+    kind: str,
+    meta: Mapping[str, Any] | None = None,
+    *,
+    id: str | None = None,
+    created_at: str | None = None,
+) -> Plan:
+    p = Plan(id or _new_id(), goal_id, kind, dict(meta or {}), created_at or _now_iso())
+    db = _db(base)
+    conn = sqlite3.connect(db)
+    try:
+        conn.execute(
+            "INSERT INTO plans(id, goal_id, kind, meta, created_at) VALUES (?,?,?,?,?)",
+            (p.id, p.goal_id, p.kind, json.dumps(p.meta), p.created_at),
+        )
+        conn.commit()
+        return p
+    finally:
+        conn.close()
+
+
+def list_plans(base: str | Path, goal_id: str | None = None) -> List[Plan]:
+    db = _db(base)
+    conn = sqlite3.connect(db)
+    try:
+        if goal_id:
+            cur = conn.execute(
+                "SELECT id, goal_id, kind, meta, created_at FROM plans WHERE goal_id=? ORDER BY created_at",
+                (goal_id,),
+            )
+        else:
+            cur = conn.execute(
+                "SELECT id, goal_id, kind, meta, created_at FROM plans ORDER BY created_at"
+            )
+        return [Plan(row[0], row[1], row[2], json.loads(row[3] or "{}"), row[4]) for row in cur.fetchall()]
+    finally:
+        conn.close()
+
+
+def add_step(
+    base: str | Path,
+    plan_id: str,
+    idx: int,
+    name: str,
+    cmd: str,
+    budget_s: float,
+    status: str,
+    *,
+    id: str | None = None,
+    created_at: str | None = None,
+) -> Step:
+    s = Step(id or _new_id(), plan_id, int(idx), name, cmd, float(budget_s), status, created_at or _now_iso())
+    db = _db(base)
+    conn = sqlite3.connect(db)
+    try:
+        conn.execute(
+            "INSERT INTO steps(id, plan_id, idx, name, cmd, budget_s, status, created_at) VALUES (?,?,?,?,?,?,?,?)",
+            (s.id, s.plan_id, s.idx, s.name, s.cmd, s.budget_s, s.status, s.created_at),
+        )
+        conn.commit()
+        return s
+    finally:
+        conn.close()
+
+
+def list_steps(base: str | Path, plan_id: str | None = None) -> List[Step]:
+    db = _db(base)
+    conn = sqlite3.connect(db)
+    try:
+        if plan_id:
+            cur = conn.execute(
+                "SELECT id, plan_id, idx, name, cmd, budget_s, status, created_at FROM steps WHERE plan_id=? ORDER BY idx",
+                (plan_id,),
+            )
+        else:
+            cur = conn.execute(
+                "SELECT id, plan_id, idx, name, cmd, budget_s, status, created_at FROM steps ORDER BY plan_id, idx"
+            )
+        return [Step(*row) for row in cur.fetchall()]
+    finally:
+        conn.close()
+
+
+def list_steps_for_goal(base: str | Path, goal_id: str) -> List[Step]:
+    db = _db(base)
+    conn = sqlite3.connect(db)
+    try:
+        cur = conn.execute(
+            """
+            SELECT s.id, s.plan_id, s.idx, s.name, s.cmd, s.budget_s, s.status, s.created_at
+            FROM steps s JOIN plans p ON s.plan_id = p.id
+            WHERE p.goal_id=? ORDER BY s.idx
+            """,
+            (goal_id,),
+        )
+        return [Step(*row) for row in cur.fetchall()]
+    finally:
+        conn.close()
+
+
+def add_run(
+    base: str | Path,
+    step_id: str,
+    started_at: str,
+    ended_at: str | None,
+    rc: int | None,
+    bytes_out: int,
+    notes: str,
+    *,
+    id: str | None = None,
+) -> Run:
+    r = Run(id or _new_id(), step_id, started_at, ended_at, rc, int(bytes_out), notes)
+    db = _db(base)
+    conn = sqlite3.connect(db)
+    try:
+        conn.execute(
+            "INSERT INTO runs(id, step_id, started_at, ended_at, rc, bytes_out, notes) VALUES (?,?,?,?,?,?,?)",
+            (r.id, r.step_id, r.started_at, r.ended_at, r.rc, r.bytes_out, r.notes),
+        )
+        conn.commit()
+        return r
+    finally:
+        conn.close()
+
+
+def list_runs(base: str | Path, step_id: str | None = None) -> List[Run]:
+    db = _db(base)
+    conn = sqlite3.connect(db)
+    try:
+        if step_id:
+            cur = conn.execute(
+                "SELECT id, step_id, started_at, ended_at, rc, bytes_out, notes FROM runs WHERE step_id=? ORDER BY started_at",
+                (step_id,),
+            )
+        else:
+            cur = conn.execute(
+                "SELECT id, step_id, started_at, ended_at, rc, bytes_out, notes FROM runs ORDER BY started_at"
+            )
+        return [Run(*row) for row in cur.fetchall()]
+    finally:
+        conn.close()
 
 # ---------- snapshot ----------
 

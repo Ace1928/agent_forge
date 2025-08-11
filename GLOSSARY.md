@@ -15,3 +15,8 @@
 - **prune_metrics**: DB helper removing older metric rows beyond a per-key limit.
 - **prune_old_days**: event bus helper deleting day directories older than ``keep_days``.
 - **prune_journal**: wrapper rotating journal file when size exceeds threshold.
+- **goal**: top-level objective stored in `state/e3.sqlite` with `title` and `drive`.
+- **plan**: strategy linked to a goal describing how to pursue it.
+- **step**: single command within a plan, executed sequentially.
+- **run**: record of executing a step including start/end times and return code.
+- **corr_id**: correlation identifier connecting events across a workflow.

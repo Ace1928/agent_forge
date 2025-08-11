@@ -16,6 +16,7 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Mapping
@@ -29,6 +30,8 @@ def append(
     data: Mapping[str, Any] | None = None,
     *,
     tags: List[str] | None = None,
+    corr_id: str | None = None,
+    parent_id: str | None = None,
     max_bytes: int = 5 * 1024 * 1024,
 ) -> Dict[str, Any]:
     """Append an event to the bus and return the event dict.
@@ -67,11 +70,15 @@ def append(
         except OSError:
             pass
 
+    corr_id = corr_id or uuid.uuid4().hex
+    parent_id = parent_id or corr_id
     evt = {
         "ts": _now_iso(),
         "type": str(etype),
         "data": dict(data or {}),
         "tags": list(tags or []),
+        "corr_id": corr_id,
+        "parent_id": parent_id,
     }
     with current.open("a", encoding="utf-8") as f:  # type: ignore[arg-type]
         f.write(json.dumps(evt, ensure_ascii=False) + "\n")
