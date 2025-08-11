@@ -17,7 +17,8 @@ Minimal state layer for Eidos E3.
 Public API (stdlib only):
     migrate(base="state") -> int
     append_journal(base, text, *, etype="note", tags=None, extra=None) -> dict
-    snapshot(base="state") -> dict
+    snapshot(base="state", *, last=5) -> dict
+    save_snapshot(base="state", snap=None) -> Path
 """
 
 from __future__ import annotations
@@ -28,6 +29,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Mapping, Tuple
 
+__all__ = ["migrate", "append_journal", "snapshot", "save_snapshot"]
+
 SCHEMA_VERSION = 1
 
 # ---------- internal paths ----------
@@ -37,6 +40,7 @@ def _p(base: Path) -> Dict[str, Path]:
         "base": base,
         "events": base / "events",
         "meta": base / "meta",
+        "snaps": base / "snaps",
         "journal": base / "events" / "journal.jsonl",
         "version": base / "meta" / "version.json",
     }
@@ -94,18 +98,17 @@ def append_journal(
 
 # ---------- snapshot ----------
 
-def snapshot(base: str | Path = "state") -> Dict[str, Any]:
-    """Compute a light snapshot: counts by entity family, last 5 journal entries, file counts."""
+def snapshot(base: str | Path = "state", *, last: int = 5) -> Dict[str, Any]:
+    """Compute a light snapshot: counts by entity family, last ``N`` journal entries, file counts."""
     b = Path(base)
     _ensure_dirs(b)
     version = migrate(b)  # idempotent
 
     # parse journal (if any)
     journal_path = _p(b)["journal"]
-    last: List[Dict[str, Any]] = []
+    last_events: List[Dict[str, Any]] = []
     counts: Dict[str, int] = {"goal": 0, "plan": 0, "step": 0, "run": 0, "metric": 0, "journal": 0, "note": 0}
     if journal_path.exists():
-        # one pass to count & also keep last 5
         buf: List[Dict[str, Any]] = []
         with journal_path.open("r", encoding="utf-8") as f:
             for line in f:
@@ -120,7 +123,7 @@ def snapshot(base: str | Path = "state") -> Dict[str, Any]:
                 family = etype.split(".", 1)[0] if etype else "note"
                 counts[family] = counts.get(family, 0) + 1
                 buf.append(evt)
-        last = buf[-5:]
+        last_events = buf[-last:] if last > 0 else []
 
     # files (quick health signal)
     files = {
@@ -135,10 +138,26 @@ def snapshot(base: str | Path = "state") -> Dict[str, Any]:
         "schema": version,
         "base": str(b.resolve()),
         "totals": counts,
-        "last_events": last,
+        "last_events": last_events,
         "files": files,
         "generated_at": _now_iso(),
     }
+
+
+def save_snapshot(base: str | Path = "state", snap: Dict[str, Any] | None = None) -> Path:
+    """Persist a snapshot to ``state/snaps`` and return the file path."""
+    b = Path(base)
+    _ensure_dirs(b)
+    p = _p(b)
+    p["snaps"].mkdir(parents=True, exist_ok=True)
+    snap = snap or snapshot(b)
+    ts = snap.get("generated_at") or _now_iso()
+    safe = ts.replace(":", "").replace("+00:00", "Z").replace("+", "Z")
+    out = p["snaps"] / f"{safe}.json"
+    tmp = out.with_suffix(out.suffix + ".tmp")
+    tmp.write_text(json.dumps(snap, indent=2), encoding="utf-8")
+    os.replace(tmp, out)
+    return out
 
 # ---------- helpers ----------
 
@@ -148,7 +167,8 @@ def _file_count(d: Path) -> int:
     return sum(1 for _ in d.rglob("*") if _.is_file())
 
 def _now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+    """Return UTC time in ISO-8601 with trailing 'Z'."""
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 if __name__ == "__main__":  # pragma: no cover
     # tiny manual smoke test
