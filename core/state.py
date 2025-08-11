@@ -30,7 +30,16 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Mapping, Tuple
 
-__all__ = ["migrate", "append_journal", "snapshot", "save_snapshot", "iter_journal"]
+__all__ = [
+    "migrate",
+    "append_journal",
+    "snapshot",
+    "save_snapshot",
+    "iter_journal",
+    "rotate_journal",
+    "load_snapshot",
+    "diff_snapshots",
+]
 
 SCHEMA_VERSION = 1
 
@@ -135,6 +144,47 @@ def iter_journal(
     if limit is not None and limit >= 0:
         out = out[-limit:]
     return out
+
+def rotate_journal(
+    base: str | Path,
+    *,
+    max_bytes: int = 5 * 1024 * 1024,
+    force: bool = False,
+) -> Path | None:
+    """Rotate events/journal.jsonl if size exceeds ``max_bytes`` (or always if ``force``)."""
+    b = Path(base)
+    _ensure_dirs(b)
+    p = _p(b)
+    jp = p["journal"]
+    if not jp.exists():
+        return None
+    size = jp.stat().st_size
+    if not force and size <= max_bytes:
+        return None
+    ts = _now_iso().replace(":", "").replace("+00:00", "Z").replace("+", "Z")
+    rot = p["events"] / f"journal-{ts}.jsonl"
+    jp.rename(rot)
+    jp.touch()
+    return rot
+
+
+def load_snapshot(path: str | Path) -> Dict[str, Any]:
+    """Read a snapshot JSON file into a dict."""
+    p = Path(path)
+    return json.loads(p.read_text(encoding="utf-8"))
+
+
+def diff_snapshots(a: Mapping[str, Any], b: Mapping[str, Any]) -> Dict[str, Any]:
+    """Return a minimal diff focusing on totals; positive numbers mean increases."""
+    at = dict(a.get("totals", {}))
+    bt = dict(b.get("totals", {}))
+    keys = set(at) | set(bt)
+    delta = {k: int(bt.get(k, 0)) - int(at.get(k, 0)) for k in sorted(keys)}
+    return {
+        "delta_totals": delta,
+        "from": {"generated_at": a.get("generated_at"), "schema": a.get("schema")},
+        "to": {"generated_at": b.get("generated_at"), "schema": b.get("schema")},
+    }
 
 # ---------- snapshot ----------
 

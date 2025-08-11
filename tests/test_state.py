@@ -103,3 +103,19 @@ def test_snapshot_last_param(tmp_path: Path):
     snap2 = S.snapshot(base, last=0)
     assert snap2["last_events"] == []
 
+
+def test_rotate_and_diff(tmp_path: Path):
+    base = tmp_path / "state"
+    S.migrate(base)
+    # small threshold ensures rotation
+    jp = base / "events" / "journal.jsonl"
+    jp.write_text("x" * 10, encoding="utf-8")
+    rot = S.rotate_journal(base, max_bytes=5)
+    assert rot and rot.exists()
+    # snapshots + diff
+    a = S.snapshot(base)
+    S.append_journal(base, "hello", etype="note")
+    b = S.snapshot(base)
+    d = S.diff_snapshots(a, b)
+    assert d["delta_totals"]["note"] == 1
+
