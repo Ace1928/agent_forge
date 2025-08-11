@@ -1,5 +1,5 @@
 from pathlib import Path
-import json
+import json, time
 from core import state as S
 
 def test_migrate_and_snapshot(tmp_path: Path):
@@ -39,12 +39,42 @@ def test_snapshot_save(tmp_path: Path):
     assert "totals" in data
 
 
+def test_snapshot_save_named(tmp_path: Path):
+    base = tmp_path / "state"
+    S.migrate(base)
+    path = S.save_snapshot(base, name="baseline_1")
+    assert path.exists()
+    assert "baseline_1" in path.name
+
+
 def test_journal_tags(tmp_path: Path):
     base = tmp_path / "state"
     S.migrate(base)
     S.append_journal(base, "hello", etype="note", tags=["x", "y"])
     snap = S.snapshot(base)
     assert snap["last_events"][-1]["tags"] == ["x", "y"]
+
+
+def test_iter_journal_filters(tmp_path: Path):
+    base = tmp_path / "state"
+    S.migrate(base)
+    S.append_journal(base, "a", etype="note", tags=["x"])
+    time.sleep(1)
+    S.append_journal(base, "b", etype="note")
+    S.append_journal(base, "c", etype="goal.created", tags=["y"])
+    S.append_journal(base, "d", etype="note", tags=["y"])
+    all_items = S.iter_journal(base, limit=None)
+    assert len(all_items) == 4
+
+    notes_with_y = S.iter_journal(base, etype="note", tag="y", limit=None)
+    assert [e["text"] for e in notes_with_y] == ["d"]
+
+    s_ts = all_items[1]["ts"]
+    only_after = S.iter_journal(base, since=s_ts, limit=None)
+    assert [e["text"] for e in only_after] == ["b", "c", "d"]
+
+    limited = S.iter_journal(base, limit=2)
+    assert len(limited) == 2
 
 
 def test_migrate_idempotent(tmp_path: Path):
