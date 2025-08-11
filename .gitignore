@@ -1,0 +1,11 @@
+# Eidos E3
+.venv/
+__pycache__/
+*.pyc
+state/
+datasets/sessions/
+*.npz
+*.pkl
+*.log
+.env
+.DS_Store
