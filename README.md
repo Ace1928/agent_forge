@@ -16,3 +16,12 @@ Minimal scaffolding for the Eidos E3 system.
 ## Bootstrap
 Run `scripts/bootstrap.sh` to seed configs, create a virtual environment and
 install dependencies.
+
+## Testing
+
+Run the test suite with the repository's virtual environment to ensure
+dependencies like PyYAML are present:
+
+```
+.venv/bin/python -m pytest -q
+```
