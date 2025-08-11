@@ -37,7 +37,11 @@ main() {
 
   say "Making Python venv"
   if [ ! -d "$root_dir/.venv" ]; then
-    python3 -m venv "$root_dir/.venv"
+    if command -v uv >/dev/null 2>&1; then
+      uv venv --seed "$root_dir/.venv"
+    else
+      python3 -m venv "$root_dir/.venv"
+    fi
   fi
   # shellcheck disable=SC1091
   source "$root_dir/.venv/bin/activate"
