@@ -154,7 +154,12 @@ def _pretty_print_state(snap: dict) -> None:
             tags = f" [{', '.join(e.get('tags', []))}]" if e.get('tags') else ""
             print(f"    - {e.get('ts')}  {e.get('type')}: {e.get('text')}{tags}")
     files = snap.get("files", {})
-    print("  files:  " + ", ".join(f"{k}={files.get(k,0)}" for k in ["events","vector_store","weights","adapters","snaps"]))
+    print(
+        "  files:  "
+        + ", ".join(
+            f"{k}={files.get(k,0)}" for k in ["events", "bus", "vector_store", "weights", "adapters", "snaps"]
+        )
+    )
 
 if __name__ == "__main__":  # pragma: no cover
     sys.exit(main())
