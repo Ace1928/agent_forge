@@ -23,3 +23,4 @@
 - **approvals**: allow/deny gate applied before executing shell commands.
 - **sandbox**: resource-limited execution environment preventing escapes.
 - **HTN**: hierarchical task network planner using templates to expand goals into steps.
+- **run artifacts**: per-run directory under `state/runs/<run_id>/` with `stdout.txt`, `stderr.txt`, and `meta.json`.

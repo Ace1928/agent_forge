@@ -29,7 +29,9 @@ from core.state import (  # type: ignore
     add_goal,
     list_goals,
     list_steps_for_goal,
+    list_runs,
 )
+from core.artifacts import run_dir
 
 def main(argv: list[str] | None = None) -> int:
     try:
@@ -90,6 +92,16 @@ def main(argv: list[str] | None = None) -> int:
         sls = ssub.add_parser("ls", help="list steps for a goal")
         sls.add_argument("--goal", required=True)
         sls.add_argument("--dir", default="state", help="state directory")
+
+        p_runs = sub.add_parser("runs", help="inspect runs")
+        rsub = p_runs.add_subparsers(dest="runs_cmd", required=True)
+        rls = rsub.add_parser("ls", help="list runs")
+        rls.add_argument("--dir", default="state", help="state directory")
+        rls.add_argument("--step", help="filter by step id")
+        rshow = rsub.add_parser("show", help="show run artifacts")
+        rshow.add_argument("--dir", default="state", help="state directory")
+        rshow.add_argument("--run", required=True)
+        rshow.add_argument("--head", type=int, default=200, help="max bytes to print per stream")
 
         args = ap.parse_args(argv)
 
@@ -165,6 +177,28 @@ def main(argv: list[str] | None = None) -> int:
             if args.steps_cmd == "ls":
                 steps = [dc.asdict(s) for s in list_steps_for_goal(args.dir, args.goal)]
                 print(json.dumps(steps, indent=2))
+                return 0
+
+        if args.cmd == "runs":
+            if args.runs_cmd == "ls":
+                runs = [dc.asdict(r) for r in list_runs(args.dir, step_id=args.step)]
+                for r in runs:
+                    print(f"{r['id']} {r['step_id']} rc={r.get('rc')} bytes={r.get('bytes_out')}")
+                return 0
+            if args.runs_cmd == "show":
+                d = run_dir(args.dir, args.run)
+                head = int(args.head)
+                for name in ("stdout", "stderr"):
+                    p = d / f"{name}.txt"
+                    data = p.read_bytes()[:head] if p.exists() else b""
+                    print(f"== {name} ==")
+                    if data:
+                        try:
+                            print(data.decode("utf-8", "replace"))
+                        except Exception:
+                            print(str(data))
+                    else:
+                        print("<empty>")
                 return 0
 
         return 2

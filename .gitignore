@@ -10,4 +10,5 @@ datasets/sessions/
 .env
 .DS_Store
 # Local live config (seeded from cfg.sample)
-cfg/
+cfg/*
+!cfg/approvals.yaml

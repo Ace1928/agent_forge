@@ -7,6 +7,8 @@ import os
 import random
 import sys
 from pathlib import Path as _P
+from datetime import datetime, timezone
+import sqlite3
 try:
     import yaml
 except Exception:
@@ -68,6 +70,26 @@ def run_once(state_dir: str, *, tick_secs: float, cpu: OM.CpuPercent) -> None:
     if not steps:
         SCH.plan({}, goal)
     else:
+        running = [s for s in steps if s.status == "running"]
+        if running:
+            s = running[0]
+            runs = S.list_runs(state_dir, s.id)
+            if runs:
+                last = runs[-1]
+                try:
+                    start = datetime.strptime(last.started_at, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+                except Exception:
+                    start = datetime.now(timezone.utc)
+                now = datetime.now(timezone.utc)
+                if (now - start).total_seconds() > 2 * s.budget_s:
+                    db = _P(state_dir) / "e3.sqlite"
+                    conn = sqlite3.connect(db)
+                    try:
+                        conn.execute("UPDATE steps SET status=? WHERE id=?", ("fail", s.id))
+                        conn.commit()
+                    finally:
+                        conn.close()
+            return
         todo = [s for s in steps if s.status == "todo"]
         if todo:
             s = todo[0]
