@@ -25,7 +25,6 @@ dependencies like PyYAML are present:
 ```
 .venv/bin/python -m pytest -q
 ```
-
 ## Smoke test
 
 Run `make smoke` for an end-to-end verification of the bootstrap, state,

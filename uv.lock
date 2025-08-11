@@ -82,6 +82,9 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/29/16/c8a903f4c4dffe7a12843191437d7cd8e32751d5de349d45d3fe69544e87/pytest-8.4.1-py3-none-any.whl", hash = "sha256:539c70ba6fcead8e78eebbf1115e8b589e7565830d7d006a8723f19ac8a0afb7", size = 365474, upload-time = "2025-06-18T05:48:03.955Z" },
 ]
 
+[package.metadata]
+requires-dist = [{ name = "pyyaml", specifier = ">=6,<7" }]
+
 [[package]]
 name = "pyyaml"
 version = "6.0.2"

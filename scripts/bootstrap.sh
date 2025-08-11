@@ -50,6 +50,15 @@ main() {
   else
     python -m pip install -U pip wheel >/dev/null
     python -m pip install --quiet 'pyyaml>=6,<7' 'pytest>=8.4'
+    if [ -f "$root_dir/uv.lock" ]; then
+      uv sync >/dev/null
+    else
+      uv pip install -r "$root_dir/pyproject.toml" >/dev/null
+    fi
+    uv pip install pytest >/dev/null
+  else
+    python -m pip install -U pip wheel >/dev/null
+    python -m pip install --quiet 'pyyaml>=6,<7' 'pytest'
   fi
 
   say "Touch state files"
